@@ -1,0 +1,13 @@
+{
+  "chainId": 0,
+  "network": "arc-testnet",
+  "contracts": {
+    "USDC": "0x3600000000000000000000000000000000000000",
+    "AgentRegistry": "",
+    "ClientRegistry": "",
+    "TrustBondVault": "",
+    "SpendingPolicyManager": "",
+    "AgentJobEscrow": "",
+    "DisputeManager": ""
+  }
+}

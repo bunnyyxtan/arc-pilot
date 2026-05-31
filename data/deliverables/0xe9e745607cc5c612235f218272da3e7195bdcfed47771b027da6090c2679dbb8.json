@@ -1,0 +1,35 @@
+{
+  "hash": "0xe9e745607cc5c612235f218272da3e7195bdcfed47771b027da6090c2679dbb8",
+  "deliverableURI": "local-deliverable://0xe9e745607cc5c612235f218272da3e7195bdcfed47771b027da6090c2679dbb8",
+  "agentName": "researcher",
+  "agentCategory": "research",
+  "jobTitle": "kjlkjlkjl",
+  "jobDescription": "lkjlkjlkj",
+  "deliverableType": "general",
+  "chainId": 5042002,
+  "jobId": "7",
+  "agentId": "6",
+  "createdByWallet": "0x70b474010e1bF0C4A087A3EaDEB157eA515872F6",
+  "txHash": null,
+  "visibility": "restricted",
+  "clientWallet": "0x70b474010e1bf0c4a087a3eadeb157ea515872f6",
+  "agentOwnerWallet": "0x70b474010e1bf0c4a087a3eadeb157ea515872f6",
+  "evaluatorWallet": "0x70b474010e1bf0c4a087a3eadeb157ea515872f6",
+  "generatedTitle": "Task Clarification Required",
+  "generatedContent": "The submitted job request lacks specific details regarding the objective, expected format, audience, or success criteria. To proceed effectively, please provide the following information:\n- A clear description of the topic or subject matter you would like researched.\n- The intended audience for the deliverable, which will help tailor the content appropriately.\n- Any specific format or structure you prefer for the final output.\n- Key points or questions you want addressed in the research.\n\nOnce this information is provided, I will be able to create a high-quality, client-ready deliverable that meets your needs.",
+  "qualityChecklist": [
+    "Request clarity was checked",
+    "No unsupported context was invented",
+    "Previous output was too generic"
+  ],
+  "raw": {
+    "generatedTitle": "Task Clarification Required",
+    "generatedContent": "The submitted job request lacks specific details regarding the objective, expected format, audience, or success criteria. To proceed effectively, please provide the following information:\n- A clear description of the topic or subject matter you would like researched.\n- The intended audience for the deliverable, which will help tailor the content appropriately.\n- Any specific format or structure you prefer for the final output.\n- Key points or questions you want addressed in the research.\n\nOnce this information is provided, I will be able to create a high-quality, client-ready deliverable that meets your needs.",
+    "qualityChecklist": [
+      "Request clarity was checked",
+      "No unsupported context was invented",
+      "Previous output was too generic"
+    ]
+  },
+  "createdAt": "2026-05-31T17:20:28.879Z"
+}

@@ -1,0 +1,13 @@
+{
+  "chainId": 5042002,
+  "network": "arc-testnet",
+  "contracts": {
+    "USDC": "0x3600000000000000000000000000000000000000",
+    "AgentRegistry": "0x47087ebd1826bd406d293448d904f0d58d6d3f84",
+    "ClientRegistry": "0x9403b998b5da9d5edaf6e2138ecc46f4f93bec88",
+    "TrustBondVault": "0x8d11bc09c1d3ee657d51f78df3f257583e8e3ded",
+    "SpendingPolicyManager": "0xf1c7ae28ab2ea3173bff0426dbaee4c35656f391",
+    "AgentJobEscrow": "0x7507f34e6b384510c3c6e36dce5d925eab444998",
+    "DisputeManager": "0x6d017667c5f84494cf728b2f02188b1d7091d9bb"
+  }
+}

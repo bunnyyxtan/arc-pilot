@@ -1,0 +1,16 @@
+node_modules/
+.next/
+artifacts/
+cache/
+coverage/
+typechain-types/
+*.tsbuildinfo
+
+.env
+.env*.local
+!.env.example
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
