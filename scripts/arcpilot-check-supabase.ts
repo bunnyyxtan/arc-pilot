@@ -2,7 +2,7 @@ import { loadEnvFiles } from "../lib/contracts/runtime";
 import { createServiceRoleSupabaseClient } from "../lib/supabase/server";
 
 const required = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-const tables = ["profiles", "deliverables", "indexed_agents", "indexed_jobs", "indexed_disputes", "app_events", "dispute_metadata", "ai_dispute_reviews", "manual_review_requests", "user_settings"] as const;
+const tables = ["profiles", "deliverables", "indexed_agents", "indexed_jobs", "indexed_disputes", "app_events", "dispute_metadata", "dispute_evidence", "ai_dispute_reviews", "manual_review_requests", "user_settings"] as const;
 
 function envStatus() {
   loadEnvFiles();
@@ -57,6 +57,24 @@ async function main() {
   }
   console.log("ok deliverables access-control columns");
 
+  const { error: aiReviewColumnsError } = await supabase
+    .from("ai_dispute_reviews")
+    .select("review_round,parent_review_id,is_active,rubric_scores")
+    .limit(1);
+  if (aiReviewColumnsError) {
+    throw new Error(`Supabase ai_dispute_reviews migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${aiReviewColumnsError.message}`);
+  }
+  console.log("ok ai_dispute_reviews round/rubric columns");
+
+  const { error: manualReviewColumnsError } = await supabase
+    .from("manual_review_requests")
+    .select("reviewed_by_wallet,resolver_note,resolved_at")
+    .limit(1);
+  if (manualReviewColumnsError) {
+    throw new Error(`Supabase manual_review_requests migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${manualReviewColumnsError.message}`);
+  }
+  console.log("ok manual_review_requests resolver queue columns");
+
   const createdAt = new Date().toISOString();
   const insertPayload: Record<string, unknown> = {
     event_type: "supabase_check",
@@ -102,6 +120,20 @@ async function main() {
     throw new Error(`Supabase dispute_metadata cleanup failed: ${disputeDeleteError.message}`);
   }
   console.log("ok dispute_metadata service-role insert/delete");
+
+  const temporaryEvidenceURI = `arcpilot://evidence/supabase-check-${Date.now()}`;
+  const { error: evidenceInsertError } = await supabase.from("dispute_evidence").insert({
+    chain_id: 5042002,
+    dispute_id: 1,
+    job_id: 1,
+    evidence_text: "Temporary ArcPilot service-role evidence write check.",
+    evidence_uri: temporaryEvidenceURI,
+    raw: { check: "arcpilot-supabase-check" }
+  });
+  if (evidenceInsertError) throw new Error(`Supabase dispute_evidence write test failed: ${evidenceInsertError.message}`);
+  const { error: evidenceDeleteError } = await supabase.from("dispute_evidence").delete().eq("evidence_uri", temporaryEvidenceURI);
+  if (evidenceDeleteError) throw new Error(`Supabase dispute_evidence cleanup failed: ${evidenceDeleteError.message}`);
+  console.log("ok dispute_evidence service-role insert/delete");
 
   const temporaryReviewURI = `arcpilot://ai-dispute-review/supabase-check-${Date.now()}`;
   const { error: aiReviewInsertError } = await supabase.from("ai_dispute_reviews").insert({

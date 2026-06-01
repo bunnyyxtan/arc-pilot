@@ -12,19 +12,23 @@ import { decodeBrowserJobURI, readAgentView, readDisputeView, readJobView } from
 import { useArcTransaction } from "../../../lib/contracts/hooks";
 import { useWalletSession } from "../../../lib/auth/use-wallet-session";
 import { shortenAddress } from "../../../lib/design/copy";
+import { isResolverAdminWallet } from "../../../lib/disputes/resolver";
 import { formatUSDC } from "../../../lib/format/usdc";
+import { toBigIntSafe } from "../../../lib/format/ids";
+import { logger } from "../../../lib/logger";
+import type { DisputeEvidenceRow, ManualReviewRequestRow } from "../../../lib/supabase/types";
 import { AIDisputeReviewCard, type AIDisputeReviewView } from "../../../components/disputes/AIDisputeReviewCard";
 import { DisputeOutcomeBadge } from "../../../components/disputes/DisputeOutcomeBadge";
+import { EvidenceForm } from "../../../components/disputes/EvidenceForm";
+import { ManualReviewQueue } from "../../../components/disputes/ManualReviewQueue";
 import { ManualReviewRequest } from "../../../components/disputes/ManualReviewRequest";
+import { ResolverActions } from "../../../components/disputes/ResolverActions";
 import { DeliverableViewer } from "../../../components/jobs/DeliverableViewer";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { TxStatus } from "../../../components/shared/TxStatus";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
-import { Input } from "../../../components/ui/Input";
 import { Section } from "../../../components/ui/Section";
-import { toBigIntSafe } from "../../../lib/format/ids";
-import { logger } from "../../../lib/logger";
 
 export default function DisputeDetails() {
   const params = useParams();
@@ -38,15 +42,22 @@ export default function DisputeDetails() {
   const [disputeMetadata, setDisputeMetadata] = useState<any>(null);
   const [job, setJob] = useState<any>(null);
   const [agent, setAgent] = useState<any>(null);
-  const [authorizedResolver, setAuthorizedResolver] = useState(false);
-  const [evidenceURI, setEvidenceURI] = useState("");
+  const [evidenceText, setEvidenceText] = useState("");
+  const [supportingLink, setSupportingLink] = useState("");
+  const [evidenceRows, setEvidenceRows] = useState<DisputeEvidenceRow[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [slashAmount, setSlashAmount] = useState("0");
   const [agentBps, setAgentBps] = useState("5000");
   const [clientBps, setClientBps] = useState("5000");
   const [aiReview, setAIReview] = useState<AIDisputeReviewView | null>(null);
   const [aiLoading, setAILoading] = useState(false);
   const [aiError, setAIError] = useState<string | null>(null);
-  const [manualRequest, setManualRequest] = useState<{ reason: string; status: string } | null>(null);
+  const [reReviewUsed, setReReviewUsed] = useState(false);
+  const [newEvidenceAvailable, setNewEvidenceAvailable] = useState(false);
+  const [reReviewReason, setReReviewReason] = useState("");
+  const [manualRequest, setManualRequest] = useState<ManualReviewRequestRow | null>(null);
+  const [manualRequests, setManualRequests] = useState<ManualReviewRequestRow[]>([]);
   const [manualReason, setManualReason] = useState("");
   const [manualLoading, setManualLoading] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
@@ -76,6 +87,7 @@ export default function DisputeDetails() {
         }
       }
       if (!nextDispute) throw new Error(addresses ? "Arc Testnet dispute not found." : "Arc Testnet contracts not configured.");
+
       let nextJob: any = null;
       try {
         const response = await fetch(`/api/jobs/${String(nextDispute.jobId)}`, { cache: "no-store" });
@@ -93,6 +105,7 @@ export default function DisputeDetails() {
         }
       }
       if (!nextJob) throw new Error("Linked job could not be loaded.");
+
       let nextAgent: any = null;
       try {
         const response = await fetch(`/api/agents/${String(nextJob.agentId)}`, { cache: "no-store" });
@@ -110,28 +123,20 @@ export default function DisputeDetails() {
         }
       }
       if (!nextAgent) throw new Error("Assigned agent could not be loaded.");
-      let resolver = false;
-      if (wallet.address && publicClient && addresses) {
-        const [listed, owner] = await Promise.all([
-          publicClient.readContract({ address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolvers", args: [wallet.address] }),
-          publicClient.readContract({ address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "owner" })
-        ]);
-        resolver = Boolean(listed) || String(owner).toLowerCase() === wallet.address.toLowerCase();
-      }
 
       setDispute(nextDispute);
       setJob(nextJob);
       setAgent(nextAgent);
-      setAuthorizedResolver(resolver);
-      setEvidenceURI(nextDispute.evidenceURI || "");
 
-      const [metadataResponse, reviewResponse, manualResponse] = await Promise.all([
+      const [metadataResponse, reviewResponse, manualResponse, evidenceResponse] = await Promise.all([
         nextDispute.reasonURI?.startsWith("arcpilot://dispute/")
           ? fetch(`/api/disputes/metadata?reasonUri=${encodeURIComponent(nextDispute.reasonURI)}`)
           : Promise.resolve(null),
         fetch(`/api/disputes/${disputeId}/ai-review`, { cache: "no-store" }),
-        fetch(`/api/disputes/${disputeId}/manual-review`, { cache: "no-store" })
+        fetch(`/api/disputes/${disputeId}/manual-review`, { cache: "no-store" }),
+        fetch(`/api/disputes/${disputeId}/evidence`, { cache: "no-store" })
       ]);
+
       let nextDisputeMetadata: any = null;
       if (metadataResponse?.ok) {
         const data = await metadataResponse.json();
@@ -142,6 +147,8 @@ export default function DisputeDetails() {
         const data = await reviewResponse.json();
         const review = data.review as AIDisputeReviewView | null;
         setAIReview(review);
+        setReReviewUsed(Boolean(data.reReviewUsed));
+        setNewEvidenceAvailable(Boolean(data.newEvidenceAvailable));
         if (review) {
           setSlashAmount(review.slash_amount || "0");
           setAgentBps(String(review.agent_bps || 0));
@@ -154,13 +161,21 @@ export default function DisputeDetails() {
       if (manualResponse.ok) {
         const data = await manualResponse.json();
         setManualRequest(data.request ?? null);
+        setManualRequests(data.requests ?? []);
       }
+      if (evidenceResponse.ok) {
+        const data = await evidenceResponse.json();
+        setEvidenceRows(data.evidence ?? []);
+      } else {
+        const data = await evidenceResponse.json().catch(() => ({}));
+        setEvidenceError(data.error || "Dispute evidence could not be loaded.");
+      }
+
       const deliverableURI = nextDisputeMetadata?.deliverable_uri || nextJob.deliverableURI || "";
       const deliverableHash = deliverableURI.startsWith("local-deliverable://")
         ? deliverableURI.slice("local-deliverable://".length)
         : "";
       if (/^0x[a-fA-F0-9]{64}$/.test(deliverableHash)) {
-        // Do not bypass deliverable API access control. The API reads the verified httpOnly wallet session.
         const previewResponse = await fetch(`/api/deliverables/${deliverableHash}`, { cache: "no-store" });
         const previewData = await previewResponse.json();
         setDeliverablePreview(previewResponse.ok && previewData?.deliverable ? previewData.deliverable : null);
@@ -173,7 +188,7 @@ export default function DisputeDetails() {
     } finally {
       setLoading(false);
     }
-  }, [addresses, disputeId, publicClient, safeDisputeId, wallet.address, walletSession.verifiedWallet]);
+  }, [addresses, disputeId, publicClient, safeDisputeId, walletSession.verifiedWallet]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -181,21 +196,29 @@ export default function DisputeDetails() {
   if (error || !dispute || !job || !agent || !addresses) return <SetupRequired message={error || "Arc Testnet dispute not found."} />;
 
   const walletAddress = wallet.address?.toLowerCase();
-  const participant = walletAddress === String(dispute.openedBy).toLowerCase() || walletAddress === String(job.client).toLowerCase() || walletAddress === String(job.evaluator).toLowerCase() || walletAddress === String(agent.owner).toLowerCase();
+  const participant = walletAddress === String(job.client).toLowerCase() || walletAddress === String(job.evaluator).toLowerCase() || walletAddress === String(agent.owner).toLowerCase();
   const walletReady = wallet.isConnected && wallet.correctNetwork;
+  const authorizedResolver = isResolverAdminWallet(wallet.address) && walletSession.matchesConnectedWallet;
   const pending = tx.phase === "pending" || tx.phase === "confirming";
   const decodedJob = decodeBrowserJobURI(job.jobURI);
   const deliverableURI = disputeMetadata?.deliverable_uri || job.deliverableURI || "";
   const resolverDisabled = !walletReady || !authorizedResolver || dispute.resolved || pending;
-  const manualDisabledReason = !wallet.isConnected
-    ? "Connect a dispute participant wallet to request manual review."
+  const sessionReady = walletSession.matchesConnectedWallet;
+  const participantDisabledReason = !wallet.isConnected
+    ? "Connect a dispute participant wallet to continue."
     : !wallet.correctNetwork
-      ? "Switch to Arc Testnet to request manual review."
+      ? "Switch to Arc Testnet to continue."
       : !participant
-        ? "Only the client, evaluator, agent owner, or dispute opener can request manual review."
-        : manualReason.trim().length < 20
-          ? "Enter at least 20 characters explaining the appeal."
+        ? "Only the client, evaluator, or agent owner can continue."
+        : !sessionReady
+          ? "Verify your connected wallet session before continuing."
           : null;
+  const evidenceDisabledReason = participantDisabledReason
+    || (dispute.resolved ? "This dispute is already resolved." : null)
+    || (evidenceText.trim().length < 20 ? "Enter at least 20 characters of evidence." : null)
+    || (pending ? "Wait for the current transaction to settle." : null);
+  const manualDisabledReason = participantDisabledReason
+    || (manualReason.trim().length < 20 ? "Enter at least 20 characters explaining the appeal." : null);
 
   async function transact(label: string, request: Parameters<typeof run>[1]) {
     const hash = await run(label, request);
@@ -203,25 +226,63 @@ export default function DisputeDetails() {
     return hash;
   }
 
-  async function runAIReview(forceRegenerate: boolean) {
+  async function runAIReview(requestReReview: boolean) {
     setAILoading(true);
     setAIError(null);
     try {
       const response = await fetch(`/api/disputes/${disputeId}/ai-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ forceRegenerate })
+        body: JSON.stringify({ requestReReview, manualAppeal: reReviewReason })
       });
       const data = await response.json();
       if (!response.ok || !data.review) throw new Error(data.error || "AI dispute review failed.");
       setAIReview(data.review);
+      setReReviewUsed(Boolean(data.reReviewUsed));
+      setNewEvidenceAvailable(Boolean(data.newEvidenceAvailable));
       setSlashAmount(data.review.slash_amount || "0");
       setAgentBps(String(data.review.agent_bps || 0));
       setClientBps(String(data.review.client_bps || 0));
+      if (requestReReview) setReReviewReason("");
     } catch (reviewError) {
       setAIError(reviewError instanceof Error ? reviewError.message : "AI dispute review failed.");
     } finally {
       setAILoading(false);
+    }
+  }
+
+  async function submitEvidence() {
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+    try {
+      const metadataResponse = await fetch(`/api/disputes/${disputeId}/evidence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evidenceText, supportingLink })
+      });
+      const metadata = await metadataResponse.json();
+      if (!metadataResponse.ok || !metadata.evidenceURI) throw new Error(metadata.error || "Unable to save dispute evidence.");
+      const hash = await run("Submit evidence", {
+        address: addresses!.DisputeManager,
+        abi: disputeManagerAbi,
+        functionName: "submitEvidence",
+        args: [safeDisputeId!, metadata.evidenceURI]
+      });
+      if (!hash) return;
+      const linkResponse = await fetch(`/api/disputes/${disputeId}/evidence`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ evidenceURI: metadata.evidenceURI, txHash: hash })
+      });
+      const linked = await linkResponse.json();
+      if (!linkResponse.ok) throw new Error(linked.error || "Evidence was submitted onchain but its transaction link could not be saved.");
+      setEvidenceText("");
+      setSupportingLink("");
+      await load();
+    } catch (submitError) {
+      setEvidenceError(submitError instanceof Error ? submitError.message : "Unable to submit dispute evidence.");
+    } finally {
+      setEvidenceLoading(false);
     }
   }
 
@@ -232,13 +293,34 @@ export default function DisputeDetails() {
       const response = await fetch(`/api/disputes/${disputeId}/manual-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestedByWallet: wallet.address, reason: manualReason })
+        body: JSON.stringify({ reason: manualReason })
       });
       const data = await response.json();
       if (!response.ok || !data.request) throw new Error(data.error || "Manual review request failed.");
       setManualRequest(data.request);
+      setManualReason("");
+      await load();
     } catch (manualReviewError) {
       setManualError(manualReviewError instanceof Error ? manualReviewError.message : "Manual review request failed.");
+    } finally {
+      setManualLoading(false);
+    }
+  }
+
+  async function updateManualReview(requestId: string, status: "accepted" | "resolved" | "rejected", resolverNote: string) {
+    setManualLoading(true);
+    setManualError(null);
+    try {
+      const response = await fetch(`/api/disputes/${disputeId}/manual-review`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, status, resolverNote })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.request) throw new Error(data.error || "Manual review queue update failed.");
+      await load();
+    } catch (manualReviewError) {
+      setManualError(manualReviewError instanceof Error ? manualReviewError.message : "Manual review queue update failed.");
     } finally {
       setManualLoading(false);
     }
@@ -273,7 +355,7 @@ export default function DisputeDetails() {
             <div className="grid gap-4 sm:grid-cols-3">
               <div><div className="text-label">Job ID</div><div className="mono-value mt-2 text-[14px] text-accent">#{String(dispute.jobId)}</div></div>
               <div><div className="text-label">Status</div><div className="mt-2 text-[14px] text-white">{dispute.resolved ? "Resolved" : "Open"}</div></div>
-              <div><div className="text-label">Evidence</div><div className="mt-2 text-[14px] text-white">{dispute.evidenceURI ? "Submitted" : "Not submitted"}</div></div>
+              <div><div className="text-label">Evidence Records</div><div className="mono-value mt-2 text-[14px] text-white">{evidenceRows.length}</div></div>
             </div>
             <div><div className="text-label">Original Job Request</div><div className="mt-3 rounded-xl border border-borderDark/60 bg-black/30 p-4 text-[13px] leading-6 text-slate-300">{decodedJob?.title && <div className="mb-2 font-medium text-white">{decodedJob.title}</div>}{decodedJob?.description || job.jobURI}</div></div>
             <div><div className="text-label">Rejection Reason</div><div className="mt-3 rounded-xl border border-borderDark/60 bg-black/30 p-4 text-[13px] leading-6 text-slate-300">{disputeMetadata?.reason || dispute.reasonURI || "No readable reason was provided."}</div></div>
@@ -285,7 +367,13 @@ export default function DisputeDetails() {
             <div><div className="text-label">Agent</div><div className="mt-2 text-[14px] text-white">{agent.name}</div></div>
             <div><div className="text-label">Escrow Amount</div><div className="mono-value mt-2 text-[18px] text-success">{formatUSDC(job.amount, { compact: true })}</div></div>
             <div><div className="text-label">Client Bond</div><div className="mono-value mt-2 text-[16px] text-warning">{formatUSDC(job.clientBond, { compact: true })}</div></div>
-            <div><div className="text-label">Evidence URI</div><div className="mono-value mt-2 break-all text-[11px] leading-5 text-slate-400">{dispute.evidenceURI || "Not submitted"}</div></div>
+            <details>
+              <summary className="cursor-pointer text-label text-slate-500">Protocol URIs</summary>
+              <div className="mono-value mt-3 grid gap-2 break-all text-[11px] leading-5 text-slate-500">
+                <div>Reason: {dispute.reasonURI || "Not recorded"}</div>
+                <div>Evidence: {dispute.evidenceURI || "Not submitted"}</div>
+              </div>
+            </details>
           </Card>
         </Section>
       </div>
@@ -306,42 +394,97 @@ export default function DisputeDetails() {
         </Section>
       )}
 
-      <Section title="AI Dispute Resolver">
-        <AIDisputeReviewCard review={aiReview} loading={aiLoading} error={aiError} onRun={runAIReview} />
+      <Section title="Submitted Evidence">
+        <div className="grid gap-4">
+          {evidenceRows.length === 0 ? (
+            <Card className="border-dashed border-borderDark/80 bg-white/[0.01] p-7 text-[13px] text-slate-500">No readable evidence has been added yet.</Card>
+          ) : evidenceRows.map((item) => (
+            <Card key={item.evidence_uri} className="border-borderDark/60 bg-black/20 p-6 shadow-depth-md">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="mono-value text-[11px] text-slate-500">{shortenAddress(item.submitted_by_wallet || "")}</div>
+                <div className="text-[11px] text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString() : "Timestamp pending"}</div>
+              </div>
+              <p className="mt-4 text-[13px] leading-6 text-slate-300">{item.evidence_text}</p>
+              {item.supporting_link && <a className="mt-4 inline-block text-[12px] text-accent hover:text-white" href={item.supporting_link} target="_blank" rel="noreferrer">Open supporting link</a>}
+            </Card>
+          ))}
+        </div>
       </Section>
 
-      {aiReview && (
+      <Section title="AI Dispute Resolver">
+        <AIDisputeReviewCard
+          review={aiReview}
+          loading={aiLoading}
+          error={aiError}
+          onRun={runAIReview}
+          reReviewUsed={reReviewUsed}
+          newEvidenceAvailable={newEvidenceAvailable}
+          reReviewReason={reReviewReason}
+          onReReviewReasonChange={setReReviewReason}
+        />
+      </Section>
+
+      {aiReview && authorizedResolver ? (
         <Section title="Execute Resolution">
+          <ResolverActions
+            review={aiReview}
+            disabled={resolverDisabled}
+            slashAmount={slashAmount}
+            agentBps={agentBps}
+            clientBps={clientBps}
+            onSlashAmountChange={setSlashAmount}
+            onAgentBpsChange={setAgentBps}
+            onClientBpsChange={setClientBps}
+            onExecuteRecommendation={executeAIRecommendation}
+            onResolveAgentWins={() => transact("Resolve agent wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] })}
+            onResolveClientWins={() => transact("Resolve client wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(slashAmount || "0", 6)] })}
+            onResolveSplit={() => transact("Resolve split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })}
+          />
+        </Section>
+      ) : aiReview ? (
+        <Section title="Resolution Status">
           <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
-            <div className="mb-5 text-[13px] leading-6 text-slate-500">
-              {authorizedResolver ? "AI Dispute Resolver has reviewed this case. The connected resolver/admin wallet can execute the recommended onchain resolution or choose a manual outcome." : "AI Dispute Resolver has reviewed this case. Connect resolver/admin wallet to execute the recommended onchain resolution."}
-            </div>
-            <div className="mb-5">
-              <Button onClick={executeAIRecommendation} disabled={resolverDisabled || aiReview.recommended_outcome === "manual_review_required"}>Execute AI Recommendation</Button>
-            </div>
-            <div className="grid gap-4 md:grid-cols-3">
-              <Button variant="success" onClick={() => transact("Resolve agent wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] })} disabled={resolverDisabled}>Resolve Agent Wins</Button>
-              <div><Input label="Slash Amount (USDC)" type="number" step="0.000001" min="0" value={slashAmount} onChange={(event) => setSlashAmount(event.target.value)} /><Button className="mt-3 w-full" variant="danger" onClick={() => transact("Resolve client wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(slashAmount || "0", 6)] })} disabled={resolverDisabled}>Resolve Client Wins</Button></div>
-              <div><div className="grid grid-cols-2 gap-3"><Input label="Agent BPS" type="number" value={agentBps} onChange={(event) => setAgentBps(event.target.value)} /><Input label="Client BPS" type="number" value={clientBps} onChange={(event) => setClientBps(event.target.value)} /></div><Button className="mt-3 w-full" variant="secondary" onClick={() => transact("Resolve split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })} disabled={resolverDisabled || Number(agentBps) + Number(clientBps) !== 10000}>Resolve Split</Button></div>
-            </div>
+            <div className="text-label text-warning">Resolver Review Pending</div>
+            <p className="mt-3 text-[14px] leading-7 text-slate-400">
+              AI Dispute Resolver has reviewed this case. The resolver/admin wallet will execute the final onchain resolution after the evidence and appeals are considered.
+            </p>
           </Card>
         </Section>
-      )}
+      ) : null}
 
       <div className="grid gap-8 lg:grid-cols-2">
         <Section title="Submit Evidence">
-          <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
-            <Input label="Evidence URI" placeholder="ipfs://..." value={evidenceURI} onChange={(event) => setEvidenceURI(event.target.value)} />
-            <Button className="mt-4 w-full" onClick={() => transact("Submit evidence", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "submitEvidence", args: [safeDisputeId!, evidenceURI] })} disabled={!walletReady || !participant || dispute.resolved || !evidenceURI || pending}>Submit Evidence</Button>
-            {!participant && <div className="mt-3 text-[12px] leading-5 text-slate-500">Only a dispute participant can submit evidence.</div>}
-          </Card>
+          <EvidenceForm
+            evidenceText={evidenceText}
+            supportingLink={supportingLink}
+            onEvidenceTextChange={setEvidenceText}
+            onSupportingLinkChange={setSupportingLink}
+            onSubmit={submitEvidence}
+            loading={evidenceLoading}
+            error={evidenceError}
+            disabledReason={evidenceDisabledReason}
+          />
         </Section>
         {aiReview && (
           <Section title="Manual Review / Appeal">
-            <ManualReviewRequest existingRequest={manualRequest} reason={manualReason} onReasonChange={setManualReason} onSubmit={requestManualReview} loading={manualLoading} error={manualError} disabledReason={manualDisabledReason} />
+            <ManualReviewRequest
+              existingRequest={manualRequest}
+              reason={manualReason}
+              onReasonChange={setManualReason}
+              onSubmit={requestManualReview}
+              loading={manualLoading}
+              error={manualError}
+              disabledReason={manualDisabledReason}
+            />
           </Section>
         )}
       </div>
+
+      {authorizedResolver && (
+        <Section title="Manual Appeal Queue">
+          <ManualReviewQueue requests={manualRequests} loading={manualLoading} error={manualError} onUpdate={updateManualReview} />
+        </Section>
+      )}
     </div>
   );
 }

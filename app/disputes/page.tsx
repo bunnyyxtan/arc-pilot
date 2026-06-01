@@ -2,10 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePublicClient } from "wagmi";
-import { arcTestnet } from "../../lib/chains/arc-testnet";
-import { getBrowserContractAddresses } from "../../lib/contracts/browser-addresses";
-import { readDisputes } from "../../lib/contracts/browser-read";
 import { shortenAddress } from "../../lib/design/copy";
 import { SetupRequired } from "../../components/layout/SetupRequired";
 import { Card } from "../../components/ui/Card";
@@ -15,14 +11,13 @@ export default function DisputesDirectory() {
   const [disputes, setDisputes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const publicClient = usePublicClient({ chainId: arcTestnet.id });
-  const addresses = getBrowserContractAddresses();
-
   useEffect(() => {
     async function load() {
       try {
-        if (!publicClient || !addresses) throw new Error("Arc Testnet contracts not configured.");
-        setDisputes(await readDisputes(publicClient, addresses));
+        const response = await fetch("/api/disputes", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Failed to read Arc Testnet disputes.");
+        setDisputes(data.disputes ?? []);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to read Arc Testnet disputes.");
       } finally {
@@ -30,7 +25,7 @@ export default function DisputesDirectory() {
       }
     }
     load();
-  }, [publicClient]);
+  }, []);
 
   if (loading) return <div className="animate-pulse py-20 text-center text-[13px] leading-6 text-slate-500">Loading Arc Testnet disputes...</div>;
   if (error) return <SetupRequired message={error} />;
@@ -55,6 +50,7 @@ export default function DisputesDirectory() {
                 <div className="flex items-center gap-3">
                   <h3 className="font-heading text-[20px] font-medium text-white">Dispute #{String(dispute.disputeId)}</h3>
                   <DisputeOutcomeBadge outcome={Number(dispute.outcome)} />
+                  {dispute.manualReviewStatus && <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-warning">Manual review {dispute.manualReviewStatus}</span>}
                 </div>
                 <div className="mono-value mt-2 text-[12px] text-slate-500">Job #{String(dispute.jobId)} / Opened by {shortenAddress(dispute.openedBy)}</div>
               </div>
@@ -66,4 +62,3 @@ export default function DisputesDirectory() {
     </div>
   );
 }
-

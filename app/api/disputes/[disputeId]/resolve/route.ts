@@ -1,5 +1,7 @@
 import { parseUsdc } from "../../../../../lib/format/usdc";
 import { logger } from "../../../../../lib/logger";
+import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
+import { isResolverAdminWallet } from "../../../../../lib/disputes/resolver";
 import { resolveAgentWins, resolveClientWins, resolveSplit } from "../../../../../lib/sdk/disputes";
 import { bodyPrivateKey, fail, ok, readJson, routeBigInt } from "../../../_utils";
 
@@ -7,6 +9,15 @@ export async function POST(request: Request, context: { params: Promise<{ disput
   // Local/demo only. Do not use server private-key writes in production frontend.
   logger.info("api.disputes.resolve", "resolve:received", {}, "Dispute resolve request received");
   try {
+    if (!isResolverAdminWallet(getVerifiedWalletFromRequest(request))) {
+      return fail(
+        new Error("Only the ArcPilot resolver/admin wallet can execute dispute resolution."),
+        403,
+        "api.disputes.resolve",
+        "resolve"
+      );
+    }
+
     const { disputeId } = await context.params;
     const body = await readJson(request);
     const id = routeBigInt(disputeId, "disputeId");

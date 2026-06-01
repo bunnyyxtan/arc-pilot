@@ -1,81 +1,187 @@
 import { NextResponse } from "next/server";
-import { logger } from "../../../../../lib/logger";
+import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
+import { normalizeWallet } from "../../../../../lib/deliverables/access";
+import { isResolverAdminWallet } from "../../../../../lib/disputes/resolver";
 import { getAgent } from "../../../../../lib/sdk/agents";
 import { getDispute } from "../../../../../lib/sdk/disputes";
 import { getJobView } from "../../../../../lib/sdk/jobs";
 import { createServiceRoleSupabaseClient } from "../../../../../lib/supabase/server";
-import { toBigIntSafe } from "../../../../../lib/format/ids";
 
-const CHAIN_ID = 5042002;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function normalizeWallet(value: unknown) {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{40}$/.test(value.trim()) ? value.trim().toLowerCase() : null;
+type RouteContext = {
+  params: Promise<{ disputeId: string }>;
+};
+
+function fail(error: unknown, status = 500) {
+  const message = error instanceof Error ? error.message : "Manual review request failed.";
+  console.error("[manual-review]", { status, error: message });
+  return NextResponse.json({ ok: false, error: message }, { status });
 }
 
-function safeId(value: bigint) {
-  const numeric = Number(value);
-  return Number.isSafeInteger(numeric) ? numeric : value.toString();
+function parseDisputeId(raw: string) {
+  if (!/^\d+$/.test(raw)) {
+    throw new Error("Invalid dispute id.");
+  }
+
+  return BigInt(raw);
 }
 
-export async function GET(_request: Request, context: { params: Promise<{ disputeId: string }> }) {
+async function assertParticipant(disputeId: bigint, wallet: string) {
+  const dispute = await getDispute(disputeId);
+  const job = await getJobView(dispute.jobId);
+  const agent = await getAgent(job.agentId);
+  const viewer = normalizeWallet(wallet);
+
+  if (
+    viewer !== normalizeWallet(job.client) &&
+    viewer !== normalizeWallet(job.evaluator) &&
+    viewer !== normalizeWallet(agent.owner)
+  ) {
+    throw new Error("Only the client, evaluator, or agent owner can request manual review.");
+  }
+
+  return { dispute, job };
+}
+
+export async function GET(_request: Request, context: RouteContext) {
   try {
-    const { disputeId } = await context.params;
-    const id = toBigIntSafe(disputeId);
-    if (!id) return NextResponse.json({ ok: false, error: "disputeId must be a positive numeric identifier." }, { status: 400 });
+    const { disputeId: rawDisputeId } = await context.params;
+    const disputeId = parseDisputeId(rawDisputeId);
     const supabase = createServiceRoleSupabaseClient();
     const { data, error } = await supabase
       .from("manual_review_requests")
       .select("*")
-      .eq("dispute_id", id.toString())
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    return NextResponse.json({ ok: true, request: data ?? null });
+      .eq("dispute_id", disputeId.toString())
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(`Could not load manual review queue: ${error.message}`);
+    }
+
+    return NextResponse.json({
+      ok: true,
+      request: data?.[0] ?? null,
+      requests: data ?? [],
+    });
   } catch (error) {
-    logger.warn("api.disputes.manualReview", "read:failed", { error }, "Manual review request read failed");
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Unable to load manual review request." }, { status: 500 });
+    return fail(error);
   }
 }
 
-export async function POST(request: Request, context: { params: Promise<{ disputeId: string }> }) {
-  const { disputeId } = await context.params;
-  const id = toBigIntSafe(disputeId);
-  if (!id) return NextResponse.json({ ok: false, error: "disputeId must be a positive numeric identifier." }, { status: 400 });
-  logger.info("api.disputes.manualReview", "create:received", { disputeId: id }, "Manual review request received");
+export async function POST(request: Request, context: RouteContext) {
   try {
-    const body = await request.json() as Record<string, unknown>;
-    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
-    const requestedByWallet = normalizeWallet(body.requestedByWallet);
-    if (reason.length < 20 || reason.length > 2000) {
-      return NextResponse.json({ ok: false, error: "Manual review reason must contain between 20 and 2000 characters." }, { status: 400 });
-    }
-    if (!requestedByWallet) {
-      return NextResponse.json({ ok: false, error: "Connect a valid participant wallet before requesting manual review." }, { status: 400 });
+    const { disputeId: rawDisputeId } = await context.params;
+    const disputeId = parseDisputeId(rawDisputeId);
+    const verifiedWallet = getVerifiedWalletFromRequest(request);
+
+    if (!verifiedWallet) {
+      return fail(new Error("Verify your connected wallet session before requesting manual review."), 401);
     }
 
-    const dispute = await getDispute(id);
-    const job = await getJobView(dispute.jobId);
-    const agent = await getAgent(job.agentId);
-    const participants = [dispute.openedBy, job.client, job.evaluator, agent.owner].map((wallet) => String(wallet).toLowerCase());
-    if (!participants.includes(requestedByWallet)) {
-      return NextResponse.json({ ok: false, error: "Only a dispute participant can request manual review." }, { status: 403 });
+    const body = (await request.json()) as { reason?: unknown };
+    const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+    if (reason.length < 20 || reason.length > 2_000) {
+      return fail(new Error("Appeal reason must be between 20 and 2000 characters."), 400);
     }
+
+    const { job } = await assertParticipant(disputeId, verifiedWallet);
+
     const supabase = createServiceRoleSupabaseClient();
-    const insertRow = {
-      chain_id: CHAIN_ID,
-      dispute_id: safeId(dispute.disputeId),
-      job_id: safeId(dispute.jobId),
-      requested_by_wallet: requestedByWallet,
-      reason,
-      status: "open"
-    };
-    const { data, error } = await supabase.from("manual_review_requests").insert(insertRow).select("*").single();
-    if (error || !data) throw new Error(error?.message || "Supabase could not save the manual review request.");
-    logger.info("api.disputes.manualReview", "create:success", { disputeId, requestId: data.id }, "Manual review request saved");
+    const requester = normalizeWallet(verifiedWallet);
+    const { data: existing, error: existingError } = await supabase
+      .from("manual_review_requests")
+      .select("*")
+      .eq("dispute_id", disputeId.toString())
+      .eq("requested_by_wallet", requester)
+      .in("status", ["open", "accepted"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new Error(`Could not inspect manual review queue: ${existingError.message}`);
+    }
+
+    if (existing) {
+      return NextResponse.json({ ok: true, request: existing, reused: true });
+    }
+
+    const { data, error } = await supabase
+      .from("manual_review_requests")
+      .insert({
+        chain_id: 5042002,
+        dispute_id: disputeId.toString(),
+        job_id: job.jobId.toString(),
+        requested_by_wallet: requester,
+        reason,
+        status: "open",
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      throw new Error(`Could not add appeal to the resolver queue: ${error.message}`);
+    }
+
     return NextResponse.json({ ok: true, request: data });
   } catch (error) {
-    logger.error("api.disputes.manualReview", "create:failed", { disputeId, error }, "Manual review request failed");
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Manual review request failed." }, { status: 500 });
+    return fail(error);
+  }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  try {
+    const { disputeId: rawDisputeId } = await context.params;
+    const disputeId = parseDisputeId(rawDisputeId);
+    const verifiedWallet = getVerifiedWalletFromRequest(request);
+
+    if (!isResolverAdminWallet(verifiedWallet)) {
+      return fail(new Error("Only the ArcPilot resolver/admin wallet can update the manual review queue."), 403);
+    }
+
+    const body = (await request.json()) as {
+      requestId?: unknown;
+      status?: unknown;
+      resolverNote?: unknown;
+    };
+    const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
+    const status = typeof body.status === "string" ? body.status.trim() : "";
+    const resolverNote = typeof body.resolverNote === "string" ? body.resolverNote.trim() : "";
+
+    if (!requestId) {
+      return fail(new Error("Manual review request id is required."), 400);
+    }
+    if (!["accepted", "resolved", "rejected"].includes(status)) {
+      return fail(new Error("Manual review status must be accepted, resolved, or rejected."), 400);
+    }
+    if (resolverNote.length > 2_000) {
+      return fail(new Error("Resolver note cannot exceed 2000 characters."), 400);
+    }
+
+    const resolvedAt = status === "resolved" || status === "rejected" ? new Date().toISOString() : null;
+    const supabase = createServiceRoleSupabaseClient();
+    const { data, error } = await supabase
+      .from("manual_review_requests")
+      .update({
+        status,
+        reviewed_by_wallet: normalizeWallet(verifiedWallet),
+        resolver_note: resolverNote || null,
+        resolved_at: resolvedAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", requestId)
+      .eq("dispute_id", disputeId.toString())
+      .select("*")
+      .single();
+
+    if (error) {
+      throw new Error(`Could not update resolver queue item: ${error.message}`);
+    }
+
+    return NextResponse.json({ ok: true, request: data });
+  } catch (error) {
+    return fail(error);
   }
 }

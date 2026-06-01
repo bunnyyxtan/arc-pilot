@@ -212,6 +212,35 @@ on dispute_metadata
 for select
 using (true);
 
+create table if not exists dispute_evidence (
+  id uuid primary key default gen_random_uuid(),
+  chain_id numeric default 5042002,
+  dispute_id numeric not null,
+  job_id numeric not null,
+  submitted_by_wallet text,
+  evidence_text text not null,
+  supporting_link text,
+  evidence_uri text unique not null,
+  tx_hash text,
+  raw jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_dispute_evidence_dispute_id on dispute_evidence(dispute_id);
+create index if not exists idx_dispute_evidence_job_id on dispute_evidence(job_id);
+create index if not exists idx_dispute_evidence_submitted_by_wallet on dispute_evidence(submitted_by_wallet);
+create index if not exists idx_dispute_evidence_evidence_uri on dispute_evidence(evidence_uri);
+create index if not exists idx_dispute_evidence_chain_id on dispute_evidence(chain_id);
+
+alter table dispute_evidence enable row level security;
+
+drop policy if exists "dispute_evidence_public_read" on dispute_evidence;
+create policy "dispute_evidence_public_read"
+on dispute_evidence
+for select
+using (true);
+
 create table if not exists ai_dispute_reviews (
   id uuid primary key default gen_random_uuid(),
   chain_id numeric default 5042002,
@@ -228,17 +257,28 @@ create table if not exists ai_dispute_reviews (
   evidence_summary text,
   fairness_notes text,
   risk_flags jsonb default '[]'::jsonb,
+  rubric_scores jsonb default '{}'::jsonb,
   reviewed_payload jsonb default '{}'::jsonb,
   review_uri text unique,
+  review_round numeric default 1,
+  parent_review_id uuid,
+  is_active boolean default true,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table ai_dispute_reviews
+  add column if not exists rubric_scores jsonb default '{}'::jsonb,
+  add column if not exists review_round numeric default 1,
+  add column if not exists parent_review_id uuid,
+  add column if not exists is_active boolean default true;
 
 create index if not exists idx_ai_dispute_reviews_dispute_id on ai_dispute_reviews(dispute_id);
 create index if not exists idx_ai_dispute_reviews_job_id on ai_dispute_reviews(job_id);
 create index if not exists idx_ai_dispute_reviews_agent_id on ai_dispute_reviews(agent_id);
 create index if not exists idx_ai_dispute_reviews_recommended_outcome on ai_dispute_reviews(recommended_outcome);
 create index if not exists idx_ai_dispute_reviews_chain_id on ai_dispute_reviews(chain_id);
+create index if not exists idx_ai_dispute_reviews_review_round on ai_dispute_reviews(dispute_id, review_round);
 
 alter table ai_dispute_reviews enable row level security;
 
@@ -256,9 +296,17 @@ create table if not exists manual_review_requests (
   requested_by_wallet text,
   reason text not null,
   status text default 'open',
+  reviewed_by_wallet text,
+  resolver_note text,
+  resolved_at timestamptz,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table manual_review_requests
+  add column if not exists reviewed_by_wallet text,
+  add column if not exists resolver_note text,
+  add column if not exists resolved_at timestamptz;
 
 create index if not exists idx_manual_review_requests_dispute_id on manual_review_requests(dispute_id);
 create index if not exists idx_manual_review_requests_job_id on manual_review_requests(job_id);

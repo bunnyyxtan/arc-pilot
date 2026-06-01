@@ -2,7 +2,7 @@ import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 
 export function ManualReviewRequest(props: {
-  existingRequest: { reason: string; status: string } | null;
+  existingRequest: { reason: string; status?: string; resolver_note?: string | null } | null;
   reason: string;
   onReasonChange: (value: string) => void;
   onSubmit: () => void;
@@ -16,8 +16,10 @@ export function ManualReviewRequest(props: {
       {props.existingRequest ? (
         <div className="mt-4">
           <div className="inline-flex rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-warning">Manual Review Requested</div>
+          <p className="mt-4 text-[13px] leading-6 text-slate-300">Your appeal has been added to the resolver queue.</p>
           <p className="mt-4 text-[13px] leading-6 text-slate-400">{props.existingRequest.reason}</p>
-          <div className="mt-3 text-[12px] text-slate-500">Status: <span className="text-slate-300">{props.existingRequest.status}</span></div>
+          <div className="mt-3 text-[12px] text-slate-500">Status: <span className="text-slate-300">{props.existingRequest.status || "open"}</span></div>
+          {props.existingRequest.resolver_note && <div className="mt-3 text-[12px] leading-5 text-slate-500">Resolver note: <span className="text-slate-300">{props.existingRequest.resolver_note}</span></div>}
         </div>
       ) : (
         <>

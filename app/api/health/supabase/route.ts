@@ -8,6 +8,7 @@ const TABLES = [
   "indexed_disputes",
   "deliverables",
   "dispute_metadata",
+  "dispute_evidence",
   "ai_dispute_reviews",
   "agent_metadata",
   "app_events"
@@ -35,6 +36,10 @@ export async function GET() {
     if (appEventsColumnsError) warnings.push(`app_events columns: ${appEventsColumnsError.message}`);
     const { error: deliverableColumnsError } = await supabase.from("deliverables").select("visibility,client_wallet,agent_owner_wallet,evaluator_wallet").limit(1);
     if (deliverableColumnsError) warnings.push(`deliverables columns: ${deliverableColumnsError.message}`);
+    const { error: aiReviewColumnsError } = await supabase.from("ai_dispute_reviews").select("review_round,parent_review_id,is_active,rubric_scores").limit(1);
+    if (aiReviewColumnsError) warnings.push(`ai_dispute_reviews columns: ${aiReviewColumnsError.message}`);
+    const { error: manualReviewColumnsError } = await supabase.from("manual_review_requests").select("reviewed_by_wallet,resolver_note,resolved_at").limit(1);
+    if (manualReviewColumnsError) warnings.push(`manual_review_requests columns: ${manualReviewColumnsError.message}`);
     return NextResponse.json({
       ok: warnings.length === 0,
       configured: true,

@@ -131,8 +131,12 @@ export type AIDisputeReviewRow = {
   evidence_summary?: string | null;
   fairness_notes?: string | null;
   risk_flags?: Json;
+  rubric_scores?: Json;
   reviewed_payload?: Json;
   review_uri?: string | null;
+  review_round?: number | null;
+  parent_review_id?: string | null;
+  is_active?: boolean | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -145,6 +149,24 @@ export type ManualReviewRequestRow = {
   requested_by_wallet?: string | null;
   reason: string;
   status?: "open" | "accepted" | "resolved" | "rejected";
+  reviewed_by_wallet?: string | null;
+  resolver_note?: string | null;
+  resolved_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type DisputeEvidenceRow = {
+  id?: string;
+  chain_id: number;
+  dispute_id: number | string;
+  job_id: number | string;
+  submitted_by_wallet?: string | null;
+  evidence_text: string;
+  supporting_link?: string | null;
+  evidence_uri: string;
+  tx_hash?: string | null;
+  raw?: Json;
   created_at?: string;
   updated_at?: string;
 };
@@ -201,6 +223,11 @@ export type Database = {
         Row: ManualReviewRequestRow;
         Insert: ManualReviewRequestRow;
         Update: Partial<ManualReviewRequestRow>;
+      };
+      dispute_evidence: {
+        Row: DisputeEvidenceRow;
+        Insert: DisputeEvidenceRow;
+        Update: Partial<DisputeEvidenceRow>;
       };
       user_settings: {
         Row: Record<string, Json>;
