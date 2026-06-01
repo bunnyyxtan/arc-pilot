@@ -25,24 +25,29 @@ export async function POST(request: Request, context: { params: Promise<{ disput
     const outcome = String(body.outcome || "");
     logger.info("api.disputes.resolve", "resolve:start", { disputeId: id, outcome }, "Resolving dispute");
 
-    if (outcome === "agentWins") {
+    if (outcome === "agentWins" || outcome === "agent_wins") {
       const result = await resolveAgentWins(id, privateKey);
       logger.info("api.disputes.resolve", "resolve:success", { disputeId: id, outcome, txHash: result.txHash }, "Dispute resolved");
       return ok({ result });
     }
-    if (outcome === "clientWins") {
+    if (outcome === "clientWins" || outcome === "client_wins") {
       const result = await resolveClientWins(id, parseUsdc(String(body.slashAmountUsdc || body.slashAmount || "0")), privateKey);
       logger.info("api.disputes.resolve", "resolve:success", { disputeId: id, outcome, txHash: result.txHash }, "Dispute resolved");
       return ok({ result });
     }
     if (outcome === "split") {
-      const result = await resolveSplit(id, BigInt(String(body.agentBps)), BigInt(String(body.clientBps)), privateKey);
+      const agentBps = BigInt(String(body.agentBps));
+      const clientBps = BigInt(String(body.clientBps));
+      if (agentBps + clientBps !== 10000n) {
+        throw new Error("agentBps + clientBps must equal 10000.");
+      }
+      const result = await resolveSplit(id, agentBps, clientBps, privateKey);
       logger.info("api.disputes.resolve", "resolve:success", { disputeId: id, outcome, txHash: result.txHash }, "Dispute resolved");
       return ok({ result });
     }
 
     logger.warn("api.disputes.resolve", "resolve:invalidOutcome", { disputeId: id, outcome }, "Invalid dispute outcome");
-    throw new Error("outcome must be agentWins, clientWins, or split.");
+    throw new Error("outcome must be agent_wins, client_wins, or split.");
   } catch (error) {
     return fail(error, 400, "api.disputes.resolve", "resolve");
   }

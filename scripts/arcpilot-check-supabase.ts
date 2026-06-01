@@ -126,6 +126,7 @@ async function main() {
     chain_id: 5042002,
     dispute_id: 1,
     job_id: 1,
+    submitted_by_role: "resolver",
     evidence_text: "Temporary ArcPilot service-role evidence write check.",
     evidence_uri: temporaryEvidenceURI,
     raw: { check: "arcpilot-supabase-check" }
@@ -133,7 +134,7 @@ async function main() {
   if (evidenceInsertError) throw new Error(`Supabase dispute_evidence write test failed: ${evidenceInsertError.message}`);
   const { error: evidenceDeleteError } = await supabase.from("dispute_evidence").delete().eq("evidence_uri", temporaryEvidenceURI);
   if (evidenceDeleteError) throw new Error(`Supabase dispute_evidence cleanup failed: ${evidenceDeleteError.message}`);
-  console.log("ok dispute_evidence service-role insert/delete");
+  console.log("ok dispute_evidence service-role insert/delete (including submitted_by_role)");
 
   const temporaryReviewURI = `arcpilot://ai-dispute-review/supabase-check-${Date.now()}`;
   const { error: aiReviewInsertError } = await supabase.from("ai_dispute_reviews").insert({

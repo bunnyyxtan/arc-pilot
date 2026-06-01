@@ -56,8 +56,8 @@ async function main() {
   assert(disputePage.includes("resolverWalletConnected"), "connected resolver UI state");
   assert(disputePage.includes("resolverSessionVerified"), "verified resolver UI state");
   assert(disputePage.includes("Verify Wallet Session"), "resolver session verification prompt");
-  assert(disputePage.includes("Execute Resolution"), "resolver execution section");
-  assert(disputePage.includes("AI recommendation is ready. Resolver/admin will execute final onchain resolution."), "normal wallet status copy");
+  assert(disputePage.includes("<ResolverActions"), "resolver execution section");
+  assert(disputePage.includes("Awaiting Resolution"), "normal wallet status copy");
   console.log("ok resolver UI branches");
 
   const userFacingFiles = [

@@ -162,6 +162,7 @@ export type DisputeEvidenceRow = {
   dispute_id: number | string;
   job_id: number | string;
   submitted_by_wallet?: string | null;
+  submitted_by_role?: "client" | "agent" | "resolver" | null;
   evidence_text: string;
   supporting_link?: string | null;
   evidence_uri: string;

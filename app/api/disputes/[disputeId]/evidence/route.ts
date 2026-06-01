@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isResolverAdminWallet } from "../../../../../lib/auth/resolver";
 import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
 import { normalizeWallet } from "../../../../../lib/deliverables/access";
 import { toBigIntSafe } from "../../../../../lib/format/ids";
@@ -33,7 +34,17 @@ async function participantContext(disputeId: bigint, viewer: string | null) {
   const job = await getJobView(dispute.jobId);
   const agent = await getAgent(job.agentId);
   const participants = [dispute.openedBy, job.client, job.evaluator, agent.owner].map((wallet) => normalizeWallet(String(wallet)));
-  return { dispute, job, isParticipant: Boolean(viewer && participants.includes(viewer)) };
+  const isResolver = Boolean(viewer && isResolverAdminWallet(viewer));
+  const isParticipant = Boolean(viewer && (participants.includes(viewer) || isResolver));
+
+  let role: "client" | "agent" | "resolver" | null = null;
+  if (viewer) {
+    if (viewer === normalizeWallet(String(job.client))) role = "client";
+    else if (viewer === normalizeWallet(String(agent.owner))) role = "agent";
+    else if (isResolver) role = "resolver";
+  }
+
+  return { dispute, job, isParticipant, role };
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ disputeId: string }> }) {
@@ -68,7 +79,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
     if (evidenceText.length < 20) {
       return NextResponse.json({ ok: false, error: "Evidence explanation must contain at least 20 characters." }, { status: 400 });
     }
-    const { dispute, job, isParticipant } = await participantContext(id, viewer);
+    const { dispute, job, isParticipant, role } = await participantContext(id, viewer);
     if (!isParticipant) return NextResponse.json({ ok: false, error: "Only a dispute participant can submit evidence." }, { status: 403 });
     if (dispute.resolved) return NextResponse.json({ ok: false, error: "This dispute is already resolved." }, { status: 409 });
     const evidenceURI = `arcpilot://evidence/dispute-${id.toString()}-${Date.now()}`;
@@ -77,6 +88,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
       dispute_id: safeId(dispute.disputeId),
       job_id: safeId(job.jobId),
       submitted_by_wallet: viewer,
+      submitted_by_role: role,
       evidence_text: evidenceText,
       supporting_link: supportingLink || null,
       evidence_uri: evidenceURI,

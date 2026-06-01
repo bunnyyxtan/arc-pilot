@@ -15,13 +15,14 @@ import { shortenAddress } from "../../../lib/design/copy";
 import { isResolverAdminWallet } from "../../../lib/auth/resolver";
 import { formatUSDC } from "../../../lib/format/usdc";
 import { toBigIntSafe } from "../../../lib/format/ids";
+import { getDisputeStatus } from "../../../lib/design/status";
 import { logger } from "../../../lib/logger";
-import type { DisputeEvidenceRow, ManualReviewRequestRow } from "../../../lib/supabase/types";
+import type { DisputeEvidenceRow } from "../../../lib/supabase/types";
 import { AIDisputeReviewCard, type AIDisputeReviewView } from "../../../components/disputes/AIDisputeReviewCard";
 import { DisputeOutcomeBadge } from "../../../components/disputes/DisputeOutcomeBadge";
+import { DisputeStatusBadge } from "../../../components/disputes/DisputeStatusBadge";
 import { EvidenceForm } from "../../../components/disputes/EvidenceForm";
-import { ManualReviewQueue } from "../../../components/disputes/ManualReviewQueue";
-import { ManualReviewRequest } from "../../../components/disputes/ManualReviewRequest";
+import { EvidenceTimeline } from "../../../components/disputes/EvidenceTimeline";
 import { ResolverActions } from "../../../components/disputes/ResolverActions";
 import { DeliverableViewer } from "../../../components/jobs/DeliverableViewer";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
@@ -56,11 +57,6 @@ export default function DisputeDetails() {
   const [reReviewUsed, setReReviewUsed] = useState(false);
   const [newEvidenceAvailable, setNewEvidenceAvailable] = useState(false);
   const [reReviewReason, setReReviewReason] = useState("");
-  const [manualRequest, setManualRequest] = useState<ManualReviewRequestRow | null>(null);
-  const [manualRequests, setManualRequests] = useState<ManualReviewRequestRow[]>([]);
-  const [manualReason, setManualReason] = useState("");
-  const [manualLoading, setManualLoading] = useState(false);
-  const [manualError, setManualError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [deliverablePreview, setDeliverablePreview] = useState<{ generated_title?: string; executive_summary?: string } | null>(null);
@@ -128,12 +124,11 @@ export default function DisputeDetails() {
       setJob(nextJob);
       setAgent(nextAgent);
 
-      const [metadataResponse, reviewResponse, manualResponse, evidenceResponse] = await Promise.all([
+      const [metadataResponse, reviewResponse, evidenceResponse] = await Promise.all([
         nextDispute.reasonURI?.startsWith("arcpilot://dispute/")
           ? fetch(`/api/disputes/metadata?reasonUri=${encodeURIComponent(nextDispute.reasonURI)}`)
           : Promise.resolve(null),
         fetch(`/api/disputes/${disputeId}/ai-review`, { cache: "no-store" }),
-        fetch(`/api/disputes/${disputeId}/manual-review`, { cache: "no-store" }),
         fetch(`/api/disputes/${disputeId}/evidence`, { cache: "no-store" })
       ]);
 
@@ -157,11 +152,6 @@ export default function DisputeDetails() {
       } else {
         const data = await reviewResponse.json().catch(() => ({}));
         setAIError(data.error || "AI dispute review could not be loaded.");
-      }
-      if (manualResponse.ok) {
-        const data = await manualResponse.json();
-        setManualRequest(data.request ?? null);
-        setManualRequests(data.requests ?? []);
       }
       if (evidenceResponse.ok) {
         const data = await evidenceResponse.json();
@@ -195,8 +185,12 @@ export default function DisputeDetails() {
   if (loading) return <div className="animate-pulse py-20 text-center text-[13px] text-slate-500">Loading Arc Testnet dispute...</div>;
   if (error || !dispute || !job || !agent || !addresses) return <SetupRequired message={error || "Arc Testnet dispute not found."} />;
 
+  /* ─── Role detection ─── */
   const walletAddress = wallet.address?.toLowerCase();
-  const participant = walletAddress === String(job.client).toLowerCase() || walletAddress === String(job.evaluator).toLowerCase() || walletAddress === String(agent.owner).toLowerCase();
+  const isClient = walletAddress === String(job.client).toLowerCase();
+  const isAgentOwner = walletAddress === String(agent.owner).toLowerCase();
+  const isEvaluator = walletAddress === String(job.evaluator).toLowerCase();
+  const participant = isClient || isAgentOwner || isEvaluator;
   const walletReady = wallet.isConnected && wallet.correctNetwork;
   const resolverWalletConnected = isResolverAdminWallet(wallet.address);
   const resolverSessionVerified = resolverWalletConnected
@@ -207,12 +201,14 @@ export default function DisputeDetails() {
   const deliverableURI = disputeMetadata?.deliverable_uri || job.deliverableURI || "";
   const resolverDisabled = !walletReady || !resolverSessionVerified || dispute.resolved || pending;
   const sessionReady = walletSession.matchesConnectedWallet;
+
+  /* ─── Evidence access control ─── */
   const participantDisabledReason = !wallet.isConnected
     ? "Connect a dispute participant wallet to continue."
     : !wallet.correctNetwork
       ? "Switch to Arc Testnet to continue."
-      : !participant
-        ? "Only the client, evaluator, or agent owner can continue."
+      : !participant && !resolverWalletConnected
+        ? "Only the client or agent owner can submit evidence."
         : !sessionReady
           ? "Verify your connected wallet session before continuing."
           : null;
@@ -220,9 +216,14 @@ export default function DisputeDetails() {
     || (dispute.resolved ? "This dispute is already resolved." : null)
     || (evidenceText.trim().length < 20 ? "Enter at least 20 characters of evidence." : null)
     || (pending ? "Wait for the current transaction to settle." : null);
-  const manualDisabledReason = participantDisabledReason
-    || (manualReason.trim().length < 20 ? "Enter at least 20 characters explaining the appeal." : null);
 
+  /* ─── Computed status ─── */
+  const disputeStatus = getDisputeStatus(dispute, {
+    hasEvidence: evidenceRows.length > 0,
+    hasAIReview: Boolean(aiReview),
+  });
+
+  /* ─── Helpers ─── */
   async function transact(label: string, request: Parameters<typeof run>[1]) {
     const hash = await run(label, request);
     if (hash) await load();
@@ -236,7 +237,11 @@ export default function DisputeDetails() {
       const response = await fetch(`/api/disputes/${disputeId}/ai-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestReReview, manualAppeal: reReviewReason })
+        body: JSON.stringify({
+          requestType: requestReReview ? "final_rereview" : "initial",
+          requestReReview,
+          manualAppeal: reReviewReason
+        })
       });
       const data = await response.json();
       if (!response.ok || !data.review) throw new Error(data.error || "AI dispute review failed.");
@@ -289,46 +294,6 @@ export default function DisputeDetails() {
     }
   }
 
-  async function requestManualReview() {
-    setManualLoading(true);
-    setManualError(null);
-    try {
-      const response = await fetch(`/api/disputes/${disputeId}/manual-review`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: manualReason })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.request) throw new Error(data.error || "Manual review request failed.");
-      setManualRequest(data.request);
-      setManualReason("");
-      await load();
-    } catch (manualReviewError) {
-      setManualError(manualReviewError instanceof Error ? manualReviewError.message : "Manual review request failed.");
-    } finally {
-      setManualLoading(false);
-    }
-  }
-
-  async function updateManualReview(requestId: string, status: "accepted" | "resolved" | "rejected", resolverNote: string) {
-    setManualLoading(true);
-    setManualError(null);
-    try {
-      const response = await fetch(`/api/disputes/${disputeId}/manual-review`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, status, resolverNote })
-      });
-      const data = await response.json();
-      if (!response.ok || !data.request) throw new Error(data.error || "Manual review queue update failed.");
-      await load();
-    } catch (manualReviewError) {
-      setManualError(manualReviewError instanceof Error ? manualReviewError.message : "Manual review queue update failed.");
-    } finally {
-      setManualLoading(false);
-    }
-  }
-
   async function executeAIRecommendation() {
     if (!aiReview) return;
     if (aiReview.recommended_outcome === "agent_wins") {
@@ -342,90 +307,103 @@ export default function DisputeDetails() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-10 animate-fadeInUp">
+      {/* ═══════ Section A — Header ═══════ */}
       <div className="relative flex flex-col justify-between gap-6 border-b border-borderDark/60 pb-8 md:flex-row md:items-start">
         <div>
-          <div className="flex flex-wrap items-center gap-4"><h1 className="lux-heading text-[36px] tracking-[-0.03em]">Dispute #{String(dispute.disputeId)}</h1><DisputeOutcomeBadge outcome={Number(dispute.outcome)} /></div>
-          <div className="mono-value mt-3 text-[12px] text-slate-500">Opened by {shortenAddress(dispute.openedBy)}</div>
+          <div className="flex flex-wrap items-center gap-4">
+            <h1 className="lux-heading text-[36px] tracking-[-0.03em]">Dispute #{String(dispute.disputeId)}</h1>
+            <DisputeStatusBadge status={disputeStatus} />
+            {dispute.resolved && <DisputeOutcomeBadge outcome={Number(dispute.outcome)} />}
+          </div>
+          <div className="mono-value mt-3 flex flex-wrap items-center gap-4 text-[12px] text-slate-500">
+            <span>Job #{String(dispute.jobId)}</span>
+            <span>Opened by {shortenAddress(dispute.openedBy)}</span>
+          </div>
         </div>
         <Link href={`/jobs/${dispute.jobId}`}><Button variant="ghost">View Job</Button></Link>
       </div>
 
       <TxStatus tx={tx} />
 
-      {process.env.NODE_ENV === "development" && (
-        <details className="rounded-xl border border-borderDark/50 bg-black/15 p-4">
-          <summary className="cursor-pointer text-label text-slate-500">Resolver debug</summary>
-          <div className="mono-value mt-3 grid gap-2 text-[11px] leading-5 text-slate-500">
-            <div>connectedWallet: {wallet.address ? shortenAddress(wallet.address) : "not connected"}</div>
-            <div>verifiedSessionWallet: {walletSession.verifiedWallet ? shortenAddress(walletSession.verifiedWallet) : "not verified"}</div>
-            <div>isResolverAdmin: {resolverWalletConnected ? "true" : "false"}</div>
+      {/* ═══════ Section B — What Happened ═══════ */}
+      <Section title="What Happened">
+        <Card className="space-y-5 border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <div className="text-label">Job</div>
+              <div className="mt-2 text-[14px] text-white">{decodedJob?.title || `Job #${String(dispute.jobId)}`}</div>
+            </div>
+            <div>
+              <div className="text-label">Agent</div>
+              <div className="mt-2 text-[14px] text-white">{agent.name || `Agent #${String(job.agentId)}`}</div>
+            </div>
+            <div>
+              <div className="text-label">Locked Reward</div>
+              <div className="mono-value mt-2 text-[18px] text-success">{formatUSDC(job.amount, { compact: true })}</div>
+            </div>
+            <div>
+              <div className="text-label">Status</div>
+              <div className="mt-2"><DisputeStatusBadge status={disputeStatus} /></div>
+            </div>
           </div>
-        </details>
-      )}
-
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <Section title="Dispute Overview">
-          <Card className="space-y-5 border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div><div className="text-label">Job ID</div><div className="mono-value mt-2 text-[14px] text-accent">#{String(dispute.jobId)}</div></div>
-              <div><div className="text-label">Status</div><div className="mt-2 text-[14px] text-white">{dispute.resolved ? "Resolved" : "Open"}</div></div>
-              <div><div className="text-label">Evidence Records</div><div className="mono-value mt-2 text-[14px] text-white">{evidenceRows.length}</div></div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <div className="text-label">Client</div>
+              <div className="mono-value mt-2 text-[13px] text-slate-300">{shortenAddress(String(job.client))}</div>
             </div>
-            <div><div className="text-label">Original Job Request</div><div className="mt-3 rounded-xl border border-borderDark/60 bg-black/30 p-4 text-[13px] leading-6 text-slate-300">{decodedJob?.title && <div className="mb-2 font-medium text-white">{decodedJob.title}</div>}{decodedJob?.description || job.jobURI}</div></div>
-            <div><div className="text-label">Rejection Reason</div><div className="mt-3 rounded-xl border border-borderDark/60 bg-black/30 p-4 text-[13px] leading-6 text-slate-300">{disputeMetadata?.reason || dispute.reasonURI || "No readable reason was provided."}</div></div>
-            {disputeMetadata?.category && <div><div className="text-label">Reason Category</div><div className="mt-2 text-[13px] text-slate-300">{disputeMetadata.category}</div></div>}
-          </Card>
-        </Section>
-        <Section title="Escrow Context">
-          <Card className="space-y-4 border-borderDark/60 bg-black/20 p-6 shadow-depth-md">
-            <div><div className="text-label">Agent</div><div className="mt-2 text-[14px] text-white">{agent.name}</div></div>
-            <div><div className="text-label">Escrow Amount</div><div className="mono-value mt-2 text-[18px] text-success">{formatUSDC(job.amount, { compact: true })}</div></div>
-            <div><div className="text-label">Client Bond</div><div className="mono-value mt-2 text-[16px] text-warning">{formatUSDC(job.clientBond, { compact: true })}</div></div>
-            <details>
-              <summary className="cursor-pointer text-label text-slate-500">Protocol URIs</summary>
-              <div className="mono-value mt-3 grid gap-2 break-all text-[11px] leading-5 text-slate-500">
-                <div>Reason: {dispute.reasonURI || "Not recorded"}</div>
-                <div>Evidence: {dispute.evidenceURI || "Not submitted"}</div>
-              </div>
-            </details>
-          </Card>
-        </Section>
-      </div>
-
-      {deliverableURI && (
-        <Section title="Deliverable Under Review">
-          <Card className="border-warning/20 bg-warning/[0.035] p-7 shadow-depth-md">
-            <div className="text-label text-warning">Protected Dispute Preview</div>
-            <h2 className="mt-3 font-heading text-[24px] tracking-[-0.02em] text-white">{deliverablePreview?.generated_title || decodedJob?.title || "Submitted deliverable"}</h2>
-            <p className="mt-3 max-w-4xl text-[14px] leading-7 text-slate-400">
-              {deliverablePreview?.executive_summary || "This deliverable is currently under dispute. Full report access depends on the final resolution."}
-            </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <DeliverableViewer deliverableURI={deliverableURI} label="View Preview" />
-              <span className="mono-value break-all text-[11px] text-slate-500">{deliverableURI}</span>
+            <div>
+              <div className="text-label">Agent Owner</div>
+              <div className="mono-value mt-2 text-[13px] text-slate-300">{shortenAddress(String(agent.owner))}</div>
             </div>
-          </Card>
-        </Section>
-      )}
-
-      <Section title="Submitted Evidence">
-        <div className="grid gap-4">
-          {evidenceRows.length === 0 ? (
-            <Card className="border-dashed border-borderDark/80 bg-white/[0.01] p-7 text-[13px] text-slate-500">No readable evidence has been added yet.</Card>
-          ) : evidenceRows.map((item) => (
-            <Card key={item.evidence_uri} className="border-borderDark/60 bg-black/20 p-6 shadow-depth-md">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="mono-value text-[11px] text-slate-500">{shortenAddress(item.submitted_by_wallet || "")}</div>
-                <div className="text-[11px] text-slate-500">{item.created_at ? new Date(item.created_at).toLocaleString() : "Timestamp pending"}</div>
+          </div>
+          {(disputeMetadata?.category || disputeMetadata?.reason || dispute.reasonURI) && (
+            <div>
+              <div className="text-label">Rejection Reason</div>
+              {disputeMetadata?.category && <div className="mt-2 text-[12px] font-medium uppercase tracking-[0.12em] text-warning">{disputeMetadata.category}</div>}
+              <div className="mt-2 rounded-xl border border-borderDark/60 bg-black/30 p-4 text-[13px] leading-6 text-slate-300">
+                {disputeMetadata?.reason || dispute.reasonURI || "No readable reason was provided."}
               </div>
-              <p className="mt-4 text-[13px] leading-6 text-slate-300">{item.evidence_text}</p>
-              {item.supporting_link && <a className="mt-4 inline-block text-[12px] text-accent hover:text-white" href={item.supporting_link} target="_blank" rel="noreferrer">Open supporting link</a>}
-            </Card>
-          ))}
-        </div>
+            </div>
+          )}
+          {deliverableURI && (
+            <div className="flex flex-wrap items-center gap-3">
+              <DeliverableViewer deliverableURI={deliverableURI} label="View Deliverable" />
+            </div>
+          )}
+          <p className="text-[13px] leading-6 text-slate-500">
+            The client challenged the submitted work. ArcPilot AI can review the job, deliverable, and evidence. The resolver/admin wallet executes the final onchain outcome.
+          </p>
+        </Card>
       </Section>
 
-      <Section title="AI Dispute Resolver">
+      {/* ═══════ Section C — Evidence ═══════ */}
+      <Section title="Evidence">
+        {participant || resolverWalletConnected ? (
+          <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+            <EvidenceForm
+              evidenceText={evidenceText}
+              supportingLink={supportingLink}
+              onEvidenceTextChange={setEvidenceText}
+              onSupportingLinkChange={setSupportingLink}
+              onSubmit={submitEvidence}
+              loading={evidenceLoading}
+              error={evidenceError}
+              disabledReason={evidenceDisabledReason}
+            />
+            <EvidenceTimeline evidence={evidenceRows} />
+          </div>
+        ) : (
+          <div className="grid gap-6">
+            <Card className="border-borderDark/60 bg-black/20 p-7 text-[14px] leading-7 text-slate-400 shadow-depth-md">
+              Only the client or agent owner can submit evidence.
+            </Card>
+            <EvidenceTimeline evidence={evidenceRows} />
+          </div>
+        )}
+      </Section>
+
+      {/* ═══════ Section D — AI Review ═══════ */}
+      <Section title="ArcPilot AI Review">
         <AIDisputeReviewCard
           review={aiReview}
           loading={aiLoading}
@@ -435,11 +413,15 @@ export default function DisputeDetails() {
           newEvidenceAvailable={newEvidenceAvailable}
           reReviewReason={reReviewReason}
           onReReviewReasonChange={setReReviewReason}
+          isResolver={resolverSessionVerified}
+          isParticipant={participant}
         />
       </Section>
 
-      {aiReview && resolverSessionVerified ? (
-        <Section title="Execute Resolution">
+      {/* ═══════ Section E — Resolution ═══════ */}
+      <Section title="Resolution">
+        {resolverSessionVerified && aiReview ? (
+          /* Resolver/admin verified — show full decision panel */
           <ResolverActions
             review={aiReview}
             disabled={resolverDisabled}
@@ -450,18 +432,16 @@ export default function DisputeDetails() {
             onAgentBpsChange={setAgentBps}
             onClientBpsChange={setClientBps}
             onExecuteRecommendation={executeAIRecommendation}
-            onResolveAgentWins={() => transact("Resolve agent wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] })}
-            onResolveClientWins={() => transact("Resolve client wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(slashAmount || "0", 6)] })}
-            onResolveSplit={() => transact("Resolve split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })}
+            onResolveAgentWins={() => transact("Resolve: Agent Wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] })}
+            onResolveClientWins={() => transact("Resolve: Client Wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(slashAmount || "0", 6)] })}
+            onResolveSplit={() => transact("Resolve: Split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })}
           />
-        </Section>
-      ) : aiReview && resolverWalletConnected ? (
-        <Section title="Execute Resolution">
+        ) : resolverWalletConnected && !resolverSessionVerified ? (
+          /* Resolver wallet connected but not session verified */
           <Card className="border-accent/20 bg-accent/[0.035] p-7 shadow-depth-md">
             <div className="text-label text-accent">Resolver Wallet Connected</div>
-            <h2 className="mt-3 font-heading text-[22px] tracking-[-0.02em] text-white">Verify wallet session to unlock resolver controls.</h2>
             <p className="mt-3 text-[14px] leading-7 text-slate-400">
-              Sign a wallet message to confirm this resolver session before executing any onchain resolution or updating the manual appeal queue.
+              Resolver wallet connected. Verify wallet session to execute resolution.
             </p>
             {walletSession.error && <div className="mt-4 rounded-xl border border-danger/30 bg-danger/5 p-4 text-[13px] leading-6 text-danger">{walletSession.error}</div>}
             <Button
@@ -472,51 +452,33 @@ export default function DisputeDetails() {
               {walletSession.signing ? "Verifying..." : "Verify Wallet Session"}
             </Button>
           </Card>
-        </Section>
-      ) : aiReview ? (
-        <Section title="Resolution Status">
-          <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
-            <div className="text-label text-warning">Resolver Review Pending</div>
+        ) : dispute.resolved ? (
+          /* Resolved */
+          <Card className="border-success/20 bg-success/[0.035] p-7 shadow-depth-md">
+            <div className="text-label text-success">Resolved</div>
             <p className="mt-3 text-[14px] leading-7 text-slate-400">
-              AI recommendation is ready. Resolver/admin will execute final onchain resolution.
+              This dispute has been resolved onchain.
+            </p>
+            <div className="mt-3"><DisputeOutcomeBadge outcome={Number(dispute.outcome)} /></div>
+          </Card>
+        ) : aiReview ? (
+          /* Review ready, normal user */
+          <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
+            <div className="text-label text-warning">Awaiting Resolution</div>
+            <p className="mt-3 text-[14px] leading-7 text-slate-400">
+              AI recommendation is ready. The resolver/admin wallet will execute the final onchain resolution.
             </p>
           </Card>
-        </Section>
-      ) : null}
-
-      <div className="grid gap-8 lg:grid-cols-2">
-        <Section title="Submit Evidence">
-          <EvidenceForm
-            evidenceText={evidenceText}
-            supportingLink={supportingLink}
-            onEvidenceTextChange={setEvidenceText}
-            onSupportingLinkChange={setSupportingLink}
-            onSubmit={submitEvidence}
-            loading={evidenceLoading}
-            error={evidenceError}
-            disabledReason={evidenceDisabledReason}
-          />
-        </Section>
-        {aiReview && (
-          <Section title="Manual Review / Appeal">
-            <ManualReviewRequest
-              existingRequest={manualRequest}
-              reason={manualReason}
-              onReasonChange={setManualReason}
-              onSubmit={requestManualReview}
-              loading={manualLoading}
-              error={manualError}
-              disabledReason={manualDisabledReason}
-            />
-          </Section>
+        ) : (
+          /* No review yet */
+          <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
+            <div className="text-label text-slate-500">Pending Review</div>
+            <p className="mt-3 text-[14px] leading-7 text-slate-400">
+              Waiting for AI review.
+            </p>
+          </Card>
         )}
-      </div>
-
-      {resolverSessionVerified && (
-        <Section title="Manual Appeal Queue">
-          <ManualReviewQueue requests={manualRequests} loading={manualLoading} error={manualError} onUpdate={updateManualReview} />
-        </Section>
-      )}
+      </Section>
     </div>
   );
 }

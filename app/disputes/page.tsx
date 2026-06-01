@@ -7,6 +7,9 @@ import { SetupRequired } from "../../components/layout/SetupRequired";
 import { Card } from "../../components/ui/Card";
 import { DisputeOutcomeBadge } from "../../components/disputes/DisputeOutcomeBadge";
 
+import { DisputeStatusBadge } from "../../components/disputes/DisputeStatusBadge";
+import { getDisputeStatus } from "../../lib/design/status";
+
 export default function DisputesDirectory() {
   const [disputes, setDisputes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,23 +46,42 @@ export default function DisputesDirectory() {
             <div className="font-heading text-[22px] font-medium text-white">No disputes indexed</div>
             <div className="mt-2 text-[14px] leading-6 text-slate-500">The configured Arc Testnet deployment has no dispute records yet.</div>
           </Card>
-        ) : disputes.map((dispute) => (
-          <Link href={`/disputes/${dispute.disputeId}`} key={String(dispute.disputeId)} className="block group">
-            <Card className="flex flex-col justify-between gap-5 border-borderDark/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.6),rgba(8,12,24,0.5))] p-6 transition-all duration-300 hover:border-danger/40 md:flex-row md:items-center">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h3 className="font-heading text-[20px] font-medium text-white">Dispute #{String(dispute.disputeId)}</h3>
-                  <DisputeOutcomeBadge outcome={Number(dispute.outcome)} />
+        ) : disputes.map((dispute) => {
+          const status = getDisputeStatus(dispute, {
+            hasEvidence: dispute.hasEvidence,
+            hasAIReview: Boolean(dispute.aiRecommendation)
+          });
+
+          return (
+            <Link href={`/disputes/${dispute.disputeId}`} key={String(dispute.disputeId)} className="block group">
+              <Card className="flex flex-col justify-between gap-5 border-borderDark/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.6),rgba(8,12,24,0.5))] p-6 transition-all duration-300 hover:border-danger/40 md:flex-row md:items-center">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-heading text-[20px] font-medium text-white">Dispute #{String(dispute.disputeId)}</h3>
+                    <DisputeStatusBadge status={status} />
+                    {dispute.resolved && <DisputeOutcomeBadge outcome={Number(dispute.outcome)} />}
+                  </div>
+                  <div className="mono-value mt-2 text-[12px] text-slate-500">Job #{String(dispute.jobId)} / Opened by {shortenAddress(dispute.openedBy)}</div>
                 </div>
-                <div className="mono-value mt-2 text-[12px] text-slate-500">Job #{String(dispute.jobId)} / Opened by {shortenAddress(dispute.openedBy)}</div>
-              </div>
-              <div className="grid gap-2 text-right text-[12px] uppercase tracking-[0.18em]">
-                <div className="text-slate-500">{dispute.resolved ? "Resolved onchain" : dispute.manualReviewStatus ? "Under manual review" : "Awaiting resolution"}</div>
-                {dispute.manualReviewStatus && <div className="text-warning">Manual appeal {dispute.manualReviewStatus}</div>}
-              </div>
-            </Card>
-          </Link>
-        ))}
+                <div className="grid gap-2 text-right text-[12px] uppercase tracking-[0.18em]">
+                  {dispute.resolved ? (
+                    <div className="text-slate-500">Resolved onchain</div>
+                  ) : dispute.aiRecommendation ? (
+                    <div className="text-warning">
+                      {dispute.aiRecommendation === "manual_review_required" ? "Needs Admin Review" :
+                       dispute.aiRecommendation === "agent_wins" ? "AI Rec: Agent Wins" :
+                       dispute.aiRecommendation === "client_wins" ? "AI Rec: Client Wins" :
+                       "AI Rec: Split"}
+                    </div>
+                  ) : (
+                    <div className="text-slate-500">Awaiting resolution</div>
+                  )}
+                  <div className="text-accent group-hover:text-white transition-colors">View Dispute ↗</div>
+                </div>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

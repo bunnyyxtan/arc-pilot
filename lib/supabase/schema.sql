@@ -233,6 +233,9 @@ create index if not exists idx_dispute_evidence_submitted_by_wallet on dispute_e
 create index if not exists idx_dispute_evidence_evidence_uri on dispute_evidence(evidence_uri);
 create index if not exists idx_dispute_evidence_chain_id on dispute_evidence(chain_id);
 
+alter table dispute_evidence
+  add column if not exists submitted_by_role text;
+
 alter table dispute_evidence enable row level security;
 
 drop policy if exists "dispute_evidence_public_read" on dispute_evidence;

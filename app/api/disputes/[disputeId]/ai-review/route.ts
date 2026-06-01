@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isResolverAdminWallet } from "../../../../../lib/auth/resolver";
 import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
 import { decodeJobURI } from "../../../../../lib/contracts/job-uri";
 import { normalizeWallet } from "../../../../../lib/deliverables/access";
@@ -99,7 +100,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
   logger.info("api.disputes.aiReview", "create:received", { disputeId: id }, "AI dispute review request received");
   try {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-    const requestReReview = body.requestReReview === true || body.forceRegenerate === true;
+    const requestReReview = body.requestType === "final_rereview" || body.requestReReview === true || body.forceRegenerate === true;
     const manualAppeal = validAppealText(body.manualAppeal || body.additionalEvidence);
     const supabase = createServiceRoleSupabaseClient();
     const [reviews, evidence] = await Promise.all([loadReviews(id.toString()), loadEvidence(id.toString())]);
@@ -121,13 +122,14 @@ export async function POST(request: Request, context: { params: Promise<{ disput
     const decodedJob = decodeJobURI(job.jobURI);
     const verifiedWallet = normalizeWallet(getVerifiedWalletFromRequest(request));
     if (requestReReview) {
+      const isResolver = Boolean(verifiedWallet && isResolverAdminWallet(verifiedWallet));
       const participants = [dispute.openedBy, job.client, job.evaluator, agent.owner].map((wallet) => normalizeWallet(String(wallet)));
-      if (!verifiedWallet || !participants.includes(verifiedWallet)) {
+      if (!verifiedWallet || (!participants.includes(verifiedWallet) && !isResolver)) {
         return NextResponse.json({ ok: false, error: "Verify a dispute participant wallet session before requesting a re-review." }, { status: 403 });
       }
       const originalCreatedAt = existing?.created_at ? Date.parse(String(existing.created_at)) : 0;
       const newEvidence = evidence.filter((item) => item.created_at && Date.parse(String(item.created_at)) > originalCreatedAt);
-      if (newEvidence.length === 0 && manualAppeal.length < 20) {
+      if (newEvidence.length === 0 && manualAppeal.length < 20 && !isResolver) {
         return NextResponse.json({ ok: false, error: "Provide additional evidence or an appeal reason before requesting the one permitted re-review." }, { status: 400 });
       }
     }
