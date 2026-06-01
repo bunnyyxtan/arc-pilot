@@ -24,6 +24,7 @@ import { DisputeStatusBadge } from "../../../components/disputes/DisputeStatusBa
 import { EvidenceForm } from "../../../components/disputes/EvidenceForm";
 import { EvidenceTimeline } from "../../../components/disputes/EvidenceTimeline";
 import { ResolverActions } from "../../../components/disputes/ResolverActions";
+import { WalletSessionGate } from "../../../components/disputes/WalletSessionGate";
 import { DeliverableViewer } from "../../../components/jobs/DeliverableViewer";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { TxStatus } from "../../../components/shared/TxStatus";
@@ -196,6 +197,7 @@ export default function DisputeDetails() {
   const resolverSessionVerified = resolverWalletConnected
     && walletSession.matchesConnectedWallet
     && isResolverAdminWallet(walletSession.verifiedWallet);
+  const canSubmitEvidence = isClient || isAgentOwner || resolverWalletConnected;
   const pending = tx.phase === "pending" || tx.phase === "confirming";
   const decodedJob = decodeBrowserJobURI(job.jobURI);
   const deliverableURI = disputeMetadata?.deliverable_uri || job.deliverableURI || "";
@@ -207,7 +209,7 @@ export default function DisputeDetails() {
     ? "Connect a dispute participant wallet to continue."
     : !wallet.correctNetwork
       ? "Switch to Arc Testnet to continue."
-      : !participant && !resolverWalletConnected
+      : !canSubmitEvidence
         ? "Only the client or agent owner can submit evidence."
         : !sessionReady
           ? "Verify your connected wallet session before continuing."
@@ -378,18 +380,20 @@ export default function DisputeDetails() {
 
       {/* ═══════ Section C — Evidence ═══════ */}
       <Section title="Evidence">
-        {participant || resolverWalletConnected ? (
+        {canSubmitEvidence ? (
           <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
-            <EvidenceForm
-              evidenceText={evidenceText}
-              supportingLink={supportingLink}
-              onEvidenceTextChange={setEvidenceText}
-              onSupportingLinkChange={setSupportingLink}
-              onSubmit={submitEvidence}
-              loading={evidenceLoading}
-              error={evidenceError}
-              disabledReason={evidenceDisabledReason}
-            />
+            <WalletSessionGate>
+              <EvidenceForm
+                evidenceText={evidenceText}
+                supportingLink={supportingLink}
+                onEvidenceTextChange={setEvidenceText}
+                onSupportingLinkChange={setSupportingLink}
+                onSubmit={submitEvidence}
+                loading={evidenceLoading}
+                error={evidenceError}
+                disabledReason={evidenceDisabledReason}
+              />
+            </WalletSessionGate>
             <EvidenceTimeline evidence={evidenceRows} />
           </div>
         ) : (
@@ -404,18 +408,35 @@ export default function DisputeDetails() {
 
       {/* ═══════ Section D — AI Review ═══════ */}
       <Section title="ArcPilot AI Review">
-        <AIDisputeReviewCard
-          review={aiReview}
-          loading={aiLoading}
-          error={aiError}
-          onRun={runAIReview}
-          reReviewUsed={reReviewUsed}
-          newEvidenceAvailable={newEvidenceAvailable}
-          reReviewReason={reReviewReason}
-          onReReviewReasonChange={setReReviewReason}
-          isResolver={resolverSessionVerified}
-          isParticipant={participant}
-        />
+        {participant || resolverWalletConnected ? (
+          <WalletSessionGate>
+            <AIDisputeReviewCard
+              review={aiReview}
+              loading={aiLoading}
+              error={aiError}
+              onRun={runAIReview}
+              reReviewUsed={reReviewUsed}
+              newEvidenceAvailable={newEvidenceAvailable}
+              reReviewReason={reReviewReason}
+              onReReviewReasonChange={setReReviewReason}
+              isResolver={resolverSessionVerified}
+              isParticipant={participant}
+              isPublic={false}
+            />
+          </WalletSessionGate>
+        ) : (
+          <AIDisputeReviewCard
+            review={aiReview}
+            loading={aiLoading}
+            error={aiError}
+            onRun={runAIReview}
+            reReviewUsed={reReviewUsed}
+            newEvidenceAvailable={newEvidenceAvailable}
+            reReviewReason={reReviewReason}
+            onReReviewReasonChange={setReReviewReason}
+            isPublic
+          />
+        )}
       </Section>
 
       {/* ═══════ Section E — Resolution ═══════ */}
@@ -438,20 +459,11 @@ export default function DisputeDetails() {
           />
         ) : resolverWalletConnected && !resolverSessionVerified ? (
           /* Resolver wallet connected but not session verified */
-          <Card className="border-accent/20 bg-accent/[0.035] p-7 shadow-depth-md">
-            <div className="text-label text-accent">Resolver Wallet Connected</div>
-            <p className="mt-3 text-[14px] leading-7 text-slate-400">
-              Resolver wallet connected. Verify wallet session to execute resolution.
-            </p>
-            {walletSession.error && <div className="mt-4 rounded-xl border border-danger/30 bg-danger/5 p-4 text-[13px] leading-6 text-danger">{walletSession.error}</div>}
-            <Button
-              className="mt-5"
-              onClick={() => void walletSession.signIn().catch(() => undefined)}
-              disabled={walletSession.signing || !wallet.correctNetwork}
-            >
-              {walletSession.signing ? "Verifying..." : "Verify Wallet Session"}
-            </Button>
-          </Card>
+          <WalletSessionGate message="Resolver wallet connected. Verify wallet session to execute resolution.">
+            <Card className="border-accent/20 bg-accent/[0.035] p-7 shadow-depth-md">
+              <div className="text-label text-accent">Resolver Wallet Connected</div>
+            </Card>
+          </WalletSessionGate>
         ) : dispute.resolved ? (
           /* Resolved */
           <Card className="border-success/20 bg-success/[0.035] p-7 shadow-depth-md">

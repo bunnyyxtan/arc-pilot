@@ -218,6 +218,7 @@ create table if not exists dispute_evidence (
   dispute_id numeric not null,
   job_id numeric not null,
   submitted_by_wallet text,
+  submitted_by_role text,
   evidence_text text not null,
   supporting_link text,
   evidence_uri text unique not null,

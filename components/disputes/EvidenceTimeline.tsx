@@ -46,7 +46,7 @@ export function EvidenceTimeline({ evidence }: { evidence: DisputeEvidenceRow[] 
                 target="_blank"
                 rel="noreferrer"
               >
-                Open supporting link ↗
+                Open supporting link
               </a>
             )}
             {item.tx_hash && (

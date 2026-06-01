@@ -40,6 +40,8 @@ export async function GET() {
     if (aiReviewColumnsError) warnings.push(`ai_dispute_reviews columns: ${aiReviewColumnsError.message}`);
     const { error: manualReviewColumnsError } = await supabase.from("manual_review_requests").select("reviewed_by_wallet,resolver_note,resolved_at").limit(1);
     if (manualReviewColumnsError) warnings.push(`manual_review_requests columns: ${manualReviewColumnsError.message}`);
+    const { error: disputeEvidenceColumnsError } = await supabase.from("dispute_evidence").select("submitted_by_role").limit(1);
+    if (disputeEvidenceColumnsError) warnings.push(`dispute_evidence columns: ${disputeEvidenceColumnsError.message}`);
     return NextResponse.json({
       ok: warnings.length === 0,
       configured: true,

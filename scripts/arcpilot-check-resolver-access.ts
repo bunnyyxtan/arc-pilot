@@ -53,9 +53,11 @@ async function main() {
   console.log(`ok resolver wallet helper (${getResolverAdminWallets().length} configured)`);
 
   const disputePage = await read("app/disputes/[disputeId]/page.tsx");
+  const walletSessionGate = await read("components/disputes/WalletSessionGate.tsx");
   assert(disputePage.includes("resolverWalletConnected"), "connected resolver UI state");
   assert(disputePage.includes("resolverSessionVerified"), "verified resolver UI state");
-  assert(disputePage.includes("Verify Wallet Session"), "resolver session verification prompt");
+  assert(disputePage.includes("<WalletSessionGate"), "resolver session gate");
+  assert(walletSessionGate.includes("Verify Wallet Session"), "resolver session verification prompt");
   assert(disputePage.includes("<ResolverActions"), "resolver execution section");
   assert(disputePage.includes("Awaiting Resolution"), "normal wallet status copy");
   console.log("ok resolver UI branches");

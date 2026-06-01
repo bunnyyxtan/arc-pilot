@@ -49,6 +49,7 @@ export function AIDisputeReviewCard(props: {
   onReReviewReasonChange: (value: string) => void;
   isResolver?: boolean;
   isParticipant?: boolean;
+  isPublic?: boolean;
 }) {
   const outcome = props.review ? OUTCOME_COPY[props.review.recommended_outcome] : null;
   const confidence = props.review ? Math.round(Number(props.review.confidence || 0) * 100) / 100 : 0;

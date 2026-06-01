@@ -75,6 +75,15 @@ async function main() {
   }
   console.log("ok manual_review_requests resolver queue columns");
 
+  const { error: disputeEvidenceColumnsError } = await supabase
+    .from("dispute_evidence")
+    .select("submitted_by_role")
+    .limit(1);
+  if (disputeEvidenceColumnsError) {
+    throw new Error(`Supabase dispute_evidence migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${disputeEvidenceColumnsError.message}`);
+  }
+  console.log("ok dispute_evidence submitted_by_role column");
+
   const createdAt = new Date().toISOString();
   const insertPayload: Record<string, unknown> = {
     event_type: "supabase_check",

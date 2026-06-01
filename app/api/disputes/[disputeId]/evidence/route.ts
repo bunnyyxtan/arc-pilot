@@ -33,9 +33,7 @@ async function participantContext(disputeId: bigint, viewer: string | null) {
   const dispute = await getDispute(disputeId);
   const job = await getJobView(dispute.jobId);
   const agent = await getAgent(job.agentId);
-  const participants = [dispute.openedBy, job.client, job.evaluator, agent.owner].map((wallet) => normalizeWallet(String(wallet)));
   const isResolver = Boolean(viewer && isResolverAdminWallet(viewer));
-  const isParticipant = Boolean(viewer && (participants.includes(viewer) || isResolver));
 
   let role: "client" | "agent" | "resolver" | null = null;
   if (viewer) {
@@ -44,7 +42,7 @@ async function participantContext(disputeId: bigint, viewer: string | null) {
     else if (isResolver) role = "resolver";
   }
 
-  return { dispute, job, isParticipant, role };
+  return { dispute, job, isParticipant: Boolean(role), role };
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ disputeId: string }> }) {
@@ -80,7 +78,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
       return NextResponse.json({ ok: false, error: "Evidence explanation must contain at least 20 characters." }, { status: 400 });
     }
     const { dispute, job, isParticipant, role } = await participantContext(id, viewer);
-    if (!isParticipant) return NextResponse.json({ ok: false, error: "Only a dispute participant can submit evidence." }, { status: 403 });
+    if (!isParticipant) return NextResponse.json({ ok: false, error: "Only the client, agent owner, or resolver can submit evidence." }, { status: 403 });
     if (dispute.resolved) return NextResponse.json({ ok: false, error: "This dispute is already resolved." }, { status: 409 });
     const evidenceURI = `arcpilot://evidence/dispute-${id.toString()}-${Date.now()}`;
     const insertRow = {
@@ -92,7 +90,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
       evidence_text: evidenceText,
       supporting_link: supportingLink || null,
       evidence_uri: evidenceURI,
-      raw: toSupabaseJson({ evidenceText, supportingLink: supportingLink || null })
+      raw: toSupabaseJson({ evidenceText, supportingLink: supportingLink || null, submittedByRole: role })
     };
     const supabase = createServiceRoleSupabaseClient();
     const { data, error } = await supabase.from("dispute_evidence").insert(insertRow).select("*").single();
