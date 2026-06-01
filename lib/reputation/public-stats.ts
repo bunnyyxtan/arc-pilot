@@ -1,3 +1,5 @@
+import { shouldCountTowardPublicRatings } from "../jobs/classification";
+
 type AgentLike = {
   agentId?: unknown;
   owner?: unknown;
@@ -16,6 +18,8 @@ type JobLike = {
   runningAt?: unknown;
   submittedAt?: unknown;
   resolvedAt?: unknown;
+  jobClassification?: unknown;
+  jobMode?: unknown;
 };
 
 const USDC_SCALE = 1_000_000n;
@@ -27,16 +31,6 @@ function asBigInt(value: unknown) {
   } catch {
     return 0n;
   }
-}
-
-function normalizeWallet(value: unknown) {
-  return typeof value === "string" ? value.toLowerCase() : "";
-}
-
-export function isSelfUseJob(job: JobLike, agentOwner: unknown) {
-  const client = normalizeWallet(job.client);
-  const owner = normalizeWallet(agentOwner);
-  return Boolean(client && owner && client === owner);
 }
 
 function publicScore(stats: {
@@ -59,7 +53,12 @@ function publicScore(stats: {
 export function withPublicMarketplaceStats<T extends AgentLike>(agent: T, jobs: JobLike[]) {
   const agentId = String(agent.agentId ?? "");
   const agentJobs = jobs.filter((job) => String(job.agentId ?? "") === agentId);
-  const thirdPartyJobs = agentJobs.filter((job) => !isSelfUseJob(job, agent.owner));
+  const thirdPartyJobs = agentJobs.filter((job) => shouldCountTowardPublicRatings({
+    storedClassification: job.jobClassification,
+    metadataClassification: job.jobMode,
+    client: job.client,
+    agentOwner: agent.owner
+  }));
   const selfUseJobs = agentJobs.length - thirdPartyJobs.length;
   const completed = thirdPartyJobs.filter((job) => Number(job.status) === 4);
   const failed = thirdPartyJobs.filter((job) => [7, 8].includes(Number(job.status)));

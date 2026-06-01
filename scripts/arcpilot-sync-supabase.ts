@@ -4,7 +4,10 @@ import { getAgentView, getTotalAgents } from "../lib/sdk/agents";
 import { getDispute, getTotalDisputes } from "../lib/sdk/disputes";
 import { getJobView, getTotalJobs } from "../lib/sdk/jobs";
 import { getDisputeIndexStatus } from "../lib/indexer/dispute-sync";
+import { decodeJobURI } from "../lib/contracts/job-uri";
+import { normalizeJobClassification, resolveJobClassification } from "../lib/jobs/classification";
 import {
+  getIndexedJobs,
   getIndexedJobDeliverable,
   getLatestDeliverableForJob,
   insertAppEvent,
@@ -99,6 +102,7 @@ async function main() {
   let indexedDisputesUpserted = 0;
   let missingDisputesRecovered = 0;
   let deliverablesLinked = 0;
+  let unknownLegacyClassifications = 0;
 
   for (const agent of agents) {
     const result = await upsertIndexedAgent(agent as unknown as Record<string, unknown>);
@@ -120,6 +124,15 @@ async function main() {
   }
 
   for (const job of jobs) {
+    const agent = agents.find((item) => item.agentId === job.agentId);
+    const decoded = decodeJobURI(job.jobURI);
+    const metadataClassification = decoded?.jobClassification ?? decoded?.jobMode;
+    if (!normalizeJobClassification(metadataClassification)) unknownLegacyClassifications += 1;
+    const jobClassification = resolveJobClassification({
+      metadataClassification,
+      client: job.client,
+      agentOwner: agent?.owner
+    });
     const onchainURI = typeof job.deliverableURI === "string" && job.deliverableURI ? job.deliverableURI : null;
     const saved = onchainURI
       ? null
@@ -128,6 +141,8 @@ async function main() {
     const result = await upsertIndexedJob({
       ...job,
       chainId: 5042002,
+      agentOwner: agent?.owner,
+      jobClassification,
       deliverableURI: onchainURI ?? saved?.deliverableURI ?? null,
       deliverableHash: saved?.deliverableHash ?? null,
       visibility: saved?.visibility ?? null
@@ -145,6 +160,7 @@ async function main() {
         client: job.client,
         status: job.status,
         statusLabel: job.statusLabel,
+        jobClassification,
         deliverableURI: onchainURI ?? saved?.deliverableURI ?? null
       })
     });
@@ -183,6 +199,9 @@ async function main() {
     })
   });
   reportWriteResult(warnings, "app_events", "supabase_sync", summaryEvent, "summary event write skipped");
+  const indexedJobs = await getIndexedJobs<Record<string, unknown>>();
+  const marketplaceJobs = indexedJobs.filter((job) => normalizeJobClassification(job.jobClassification) === "marketplace").length;
+  const selfUseJobs = indexedJobs.filter((job) => normalizeJobClassification(job.jobClassification) === "self_use").length;
 
   console.log("Supabase sync complete");
   console.log(`Onchain agents found: ${agents.length}`);
@@ -191,6 +210,9 @@ async function main() {
   console.log(`agent metadata missing: ${metadataMissing.length ? metadataMissing.map((agent) => `agent #${agent.agentId.toString()}`).join(", ") : "none"}`);
   console.log(`Onchain jobs found: ${jobs.length}`);
   console.log(`indexed_jobs upserted: ${indexedJobsUpserted}`);
+  console.log(`Marketplace jobs indexed: ${marketplaceJobs}`);
+  console.log(`Self-use jobs indexed: ${selfUseJobs}`);
+  console.log(`Unknown legacy classification inputs defaulted safely: ${unknownLegacyClassifications}`);
   console.log(`Onchain disputes found: ${disputes.length}`);
   console.log(`indexed_disputes upserted: ${indexedDisputesUpserted}`);
   console.log(`Missing disputes recovered: ${missingDisputesRecovered}`);

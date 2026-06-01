@@ -9,6 +9,7 @@ import { getAgent } from "../../../../lib/sdk/agents";
 import { getSdkContracts } from "../../../../lib/sdk/arcpilot";
 import { getJobView } from "../../../../lib/sdk/jobs";
 import { decodeJobURI } from "../../../../lib/contracts/job-uri";
+import { isSelfUseJob, resolveJobClassification } from "../../../../lib/jobs/classification";
 
 async function isResolverWallet(viewer: string) {
   const wallet = normalizeWallet(viewer);
@@ -66,8 +67,14 @@ export async function GET(request: Request, context: { params: Promise<{ hash: s
       isSubmittedOnchain = Boolean(job.deliverableURI && job.deliverableURI === savedURI);
       const agent = await getAgent(job.agentId);
       agentOwner = String(agent.owner);
-      isSelfUse = normalizeWallet(clientWallet) === normalizeWallet(agentOwner);
-      selfUseExplicit = isSelfUse && decodeJobURI(job.jobURI)?.jobMode === "self_use";
+      const decoded = decodeJobURI(job.jobURI);
+      const jobClassification = resolveJobClassification({
+        metadataClassification: decoded?.jobClassification ?? decoded?.jobMode,
+        clientWallet,
+        agentOwnerWallet: agentOwner
+      });
+      isSelfUse = isSelfUseJob({ explicitClassification: jobClassification });
+      selfUseExplicit = jobClassification === "self_use" && Boolean(decoded?.jobClassification === "self_use" || decoded?.jobMode === "self_use");
     } catch (error) {
       logger.warn("api.deliverables", "read:onchainContextUnavailable", { hash, jobId: result.deliverable.jobId, error }, "Deliverable onchain context lookup failed");
     }
@@ -104,6 +111,8 @@ export async function GET(request: Request, context: { params: Promise<{ hash: s
     source: result.source,
     jobStatus: jobStatusLabel,
     isSubmittedOnchain,
+    isSelfUse,
+    selfUseExplicit,
     verifiedWallet: Boolean(viewer),
     viewerRole: policy.viewerRole,
     message: policy.message,

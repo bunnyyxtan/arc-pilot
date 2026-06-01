@@ -81,6 +81,7 @@ create table if not exists indexed_jobs (
   deliverable_uri text,
   deliverable_hash text,
   visibility text default 'restricted',
+  job_classification text default 'marketplace',
   payload jsonb default '{}'::jsonb,
   updated_at timestamptz default now()
 );
@@ -94,12 +95,18 @@ alter table indexed_jobs
   add column if not exists deliverable_uri text,
   add column if not exists deliverable_hash text,
   add column if not exists visibility text default 'restricted',
+  add column if not exists job_classification text default 'marketplace',
   add column if not exists payload jsonb default '{}'::jsonb,
   add column if not exists updated_at timestamptz default now();
 
 create index if not exists indexed_jobs_chain_id_idx on indexed_jobs(chain_id);
 create index if not exists indexed_jobs_agent_id_idx on indexed_jobs(agent_id);
 create index if not exists indexed_jobs_client_idx on indexed_jobs(client);
+create index if not exists indexed_jobs_job_classification_idx on indexed_jobs(job_classification);
+
+update indexed_jobs
+set job_classification = 'marketplace'
+where job_classification is null;
 
 create table if not exists indexed_disputes (
   dispute_id numeric primary key,
@@ -376,6 +383,13 @@ alter table ai_dispute_reviews
   add column if not exists agent_deliverable_strength text,
   add column if not exists scope_assessment text,
   add column if not exists bad_faith_risk text;
+
+alter table ai_dispute_reviews
+  drop constraint if exists ai_dispute_reviews_outcome_check;
+
+alter table ai_dispute_reviews
+  add constraint ai_dispute_reviews_outcome_check
+  check (recommended_outcome in ('agent_wins', 'client_wins', 'split', 'needs_admin_review', 'manual_review_required'));
 
 create index if not exists idx_ai_dispute_reviews_dispute_id on ai_dispute_reviews(dispute_id);
 create index if not exists idx_ai_dispute_reviews_job_id on ai_dispute_reviews(job_id);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { usePublicClient } from "wagmi";
 import { arcTestnet } from "../../../lib/chains/arc-testnet";
@@ -20,7 +20,6 @@ import { DisputeConfirmModal } from "../../../components/jobs/DisputeConfirmModa
 import { JobFeedbackModal, type ReviewContext } from "../../../components/jobs/JobFeedbackModal";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
-import { Input } from "../../../components/ui/Input";
 import { Section } from "../../../components/ui/Section";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { WalletFundsNotice } from "../../../components/wallet/WalletFundsNotice";
@@ -28,6 +27,8 @@ import type { DeliverableType } from "../../../lib/openai/prompts";
 import { toBigIntSafe } from "../../../lib/format/ids";
 import { logger } from "../../../lib/logger";
 import { getDisputeStatus } from "../../../lib/disputes/status";
+import { isSelfUseJob, resolveJobClassification, shouldCountTowardPublicRatings } from "../../../lib/jobs/classification";
+import { JOB_STATUS, normalizeJobStatus } from "../../../lib/jobs/status";
 
 function detectDeliverableType(title: string, description: string): DeliverableType {
   const combined = `${title} ${description}`.toLowerCase();
@@ -91,6 +92,8 @@ export default function JobDetails() {
   const [reviewPromptContext, setReviewPromptContext] = useState<ReviewContext | null>(null);
   const [regeneration, setRegeneration] = useState<{ attemptsUsed: number; maxAttempts: number; remainingAttempts: number } | null>(null);
   const [linkedDispute, setLinkedDispute] = useState<any>(null);
+  const [autoRunFailed, setAutoRunFailed] = useState(false);
+  const autoRunStarted = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -238,12 +241,19 @@ export default function JobDetails() {
   const walletReady = wallet.isConnected && wallet.correctNetwork;
   const pending = tx.phase === "pending" || tx.phase === "confirming";
   const decoded = decodeBrowserJobURI(job.jobURI);
-  const jobStatus = Number(job.status);
+  const jobStatus = normalizeJobStatus(job.status) ?? Number(job.status);
   const hasDeliverableURI = Boolean(deliverableURI.trim());
   const deliverableHash = deliverableHashFromURI(deliverableURI);
   const deliverableVisibility = decoded?.deliverableVisibility === "public" ? "public" : "restricted";
-  const isSelfUse = Boolean(clientAddress && agentOwnerNormalized && clientAddress.toLowerCase() === agentOwnerNormalized);
-  const selfUseExplicit = isSelfUse && decoded?.jobMode === "self_use";
+  const jobClassification = resolveJobClassification({
+    storedClassification: job.jobClassification,
+    metadataClassification: decoded?.jobClassification ?? decoded?.jobMode,
+    clientWallet: clientAddress,
+    agentOwnerWallet: agentOwnerAddress
+  });
+  const isSelfUse = isSelfUseJob({ explicitClassification: jobClassification });
+  const selfUseExplicit = jobClassification === "self_use" && Boolean(decoded?.jobClassification === "self_use" || decoded?.jobMode === "self_use");
+  const countsTowardPublicRatings = shouldCountTowardPublicRatings({ explicitClassification: jobClassification });
   const ownerExecutionCopy = "Only the agent owner can start or submit work in the current contract version.";
   const linkedDisputeStatus = linkedDispute
     ? getDisputeStatus(linkedDispute, {
@@ -278,6 +288,7 @@ export default function JobDetails() {
     (jobStatus !== 1 ? "Job is not Funded" : null) ||
     (!agentOwnerAddress ? "Agent owner could not be loaded" : null) ||
     (!isAgentOwner ? "Connected wallet is not agent owner" : null) ||
+    (!walletSession.matchesConnectedWallet ? "Verify wallet session before starting AI work" : null) ||
     (pending ? "Transaction pending" : null);
 
   const runGptReason =
@@ -339,7 +350,7 @@ export default function JobDetails() {
 
   async function approveWork() {
     const hash = await transact("Approve and release", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] });
-    if (hash && isJobClient && !isSelfUse) setReviewPromptContext("approval");
+    if (hash && isJobClient && countsTowardPublicRatings) setReviewPromptContext("approval");
   }
 
   async function submitReview() {
@@ -425,7 +436,7 @@ export default function JobDetails() {
         }
         setShowDisputeModal(false);
         setDisputeApiError(null);
-        if (isJobClient && !isSelfUse) setReviewPromptContext("dispute");
+        if (isJobClient && countsTowardPublicRatings) setReviewPromptContext("dispute");
         await load();
         router.refresh();
       }
@@ -470,10 +481,46 @@ export default function JobDetails() {
       }
       if (data.regeneration) setRegeneration(data.regeneration);
       setGptSuccess(data.message || (data.reused ? `Existing deliverable reused: ${nextURI}` : `Deliverable generated: ${nextURI}`));
+      setAutoRunFailed(false);
+      return nextURI as string;
     } catch (runError) {
       setGptError(runError instanceof Error ? runError.message : "AI agent run failed.");
+      return null;
     } finally {
       setGptLoading(false);
+    }
+  }
+
+  async function waitForRunningState() {
+    if (!publicClient || !addresses || !safeJobId) throw new Error("Arc Testnet job state is unavailable.");
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const nextJob = await readJobView(publicClient, addresses, safeJobId);
+      if (normalizeJobStatus(nextJob.status) === JOB_STATUS.RUNNING) {
+        setJob(nextJob);
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+    }
+    throw new Error("Start Work confirmed, but Arc Testnet has not reported the Running state yet. Retry AI generation from recovery controls.");
+  }
+
+  async function startWorkAndGenerate() {
+    if (autoRunStarted.current) return;
+    autoRunStarted.current = true;
+    setAutoRunFailed(false);
+    setGptError(null);
+    try {
+      const hash = await run("Start work", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "markRunning", args: [safeJobId!] });
+      if (!hash) return;
+      await waitForRunningState();
+      const generatedURI = await runGptAgent(false);
+      if (!generatedURI) setAutoRunFailed(true);
+      await load();
+    } catch (startError) {
+      setAutoRunFailed(true);
+      setGptError(startError instanceof Error ? startError.message : "AI generation could not start after the transaction confirmed.");
+    } finally {
+      autoRunStarted.current = false;
     }
   }
 
@@ -568,6 +615,11 @@ export default function JobDetails() {
           </div>
         </div>
       )}
+      {!isSelfUse && (
+        <div className="rounded-xl border border-success/20 bg-success/[0.035] p-4 text-[12px] leading-5 text-slate-400">
+          Marketplace job. Public rating eligibility follows the explicit saved classification, independent of wallet reuse.
+        </div>
+      )}
       {jobStatus === 1 && (
         <div className="rounded-xl border border-info/20 bg-info/5 p-5">
           <div className="text-label text-info">Waiting for Agent Runner</div>
@@ -606,14 +658,7 @@ export default function JobDetails() {
                         ))}
                       </div>
                     )}
-                    {deliverableHash && (
-                      <>
-                        <div className="mb-2 text-[10px] uppercase tracking-widest text-slate-500">Deliverable Hash</div>
-                        <div className="mono-value mb-4 break-all text-[12px] leading-relaxed text-slate-400">{deliverableHash}</div>
-                      </>
-                    )}
-                    <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-2">Deliverable URI</div>
-                    <div className="mono-value text-[13px] text-slate-300 break-all leading-relaxed">{deliverableURI}</div>
+                    <div className="text-[13px] leading-6 text-slate-400">Saved output generated. Its protected URI is ready for the agent-owner submission transaction.</div>
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     {canOpenSavedOutput
@@ -621,29 +666,21 @@ export default function JobDetails() {
                       : needsVerifiedSession
                         ? <Button variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>{walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}</Button>
                         : <Button variant="secondary" disabled>{deliverableViewLabel}</Button>}
-                    <Button variant="secondary" onClick={copyDeliverableURI}>Copy URI</Button>
                     {jobStatus === 2 && isAgentOwner && (
                       <Button variant="secondary" onClick={() => runGptAgent(true)} disabled={Boolean(regenerateReason)} title={regenerateReason || undefined}>
                         {gptLoading ? "Regenerating..." : "Regenerate"}
                       </Button>
                     )}
-                    {jobStatus === 2 && isAgentOwner && (
-                      <Button onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [safeJobId!, deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>
-                        Submit Deliverable
-                      </Button>
-                    )}
-                    {jobStatus === 3 && isReviewer && (
-                      <Button variant="success" onClick={approveWork} disabled={Boolean(approveReason)} title={approveReason || undefined}>
-                        Approve And Release
-                      </Button>
-                    )}
-                    {jobStatus === 3 && isReviewer && (
-                      <Button variant="danger" onClick={() => { setDisputeApiError(null); setShowDisputeModal(true); }} disabled={Boolean(openDisputeReason)} title={openDisputeReason || undefined}>
-                        Reject To Dispute
-                      </Button>
-                    )}
-                    {uriCopied && <span className="text-[12px] text-success animate-fadeInUp">URI copied</span>}
                   </div>
+                  {(isAgentOwner || jobStatus >= 3) && (
+                    <details className="rounded-xl border border-borderDark bg-black/20 p-4 text-[12px] text-slate-500">
+                      <summary className="cursor-pointer select-none text-label text-slate-400">Developer Details</summary>
+                      {deliverableHash && <div className="mono-value mt-4 break-all leading-5 text-slate-400">Hash {deliverableHash}</div>}
+                      <div className="mono-value mt-3 break-all leading-5 text-slate-400">URI {deliverableURI}</div>
+                      <Button className="mt-4" variant="secondary" onClick={copyDeliverableURI}>Copy URI</Button>
+                      {uriCopied && <span className="ml-3 text-success">URI copied</span>}
+                    </details>
+                  )}
                   {jobStatus === 2 && isReviewer && !isAgentOwner && <div className="text-[12px] leading-5 text-slate-500">The agent has generated output but has not submitted it for review yet.</div>}
                   {jobStatus === 2 && isAgentOwner && !selfUseExplicit && <div className="text-[12px] leading-5 text-warning">Saved output generated. The full result stays sealed until escrow approval.</div>}
                   {jobStatus === 2 && isAgentOwner && regeneration && (
@@ -664,20 +701,22 @@ export default function JobDetails() {
                   </div>
                 ) : jobStatus === 2 && isAgentOwner ? (
                   <>
-                    <div className="mb-4 text-[13px] leading-6 text-slate-500">
-                      Generate a real server-side AI deliverable, then submit its saved URI from the connected agent-owner wallet.
+                    <div className="text-[13px] leading-6 text-slate-500">
+                      {gptLoading ? "Generating AI output from the confirmed Running job..." : "ArcPilot has not found a saved deliverable yet. Automatic generation runs immediately after Start Work confirms."}
                     </div>
-                    <Input label="Deliverable URI" placeholder="local-deliverable://0x..." value={deliverableURI} onChange={(event) => setDeliverableURI(event.target.value)} />
                     <div className="mt-4 flex flex-wrap gap-3">
                       {!walletSession.matchesConnectedWallet && walletReady && (
                         <Button variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>
                           {walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}
                         </Button>
                       )}
-                      <Button variant="secondary" onClick={() => runGptAgent(false)} disabled={Boolean(runGptReason)} title={runGptReason || undefined}>{gptLoading ? "Running AI Agent..." : "Run AI Agent"}</Button>
-                      <Button onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [safeJobId!, deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>Submit Deliverable</Button>
                     </div>
-                    {(runGptReason || submitReason) && <div className="mt-3 text-[12px] leading-5 text-slate-500">{runGptReason ? `Run AI Agent: ${runGptReason}. ` : ""}{submitReason ? `Submit: ${submitReason}.` : ""}</div>}
+                    <details className="mt-4 rounded-xl border border-borderDark bg-black/20 p-4">
+                      <summary className="cursor-pointer select-none text-label text-slate-400">{autoRunFailed ? "AI Generation Needs Attention" : "Recovery Controls"}</summary>
+                      <div className="mt-3 text-[12px] leading-5 text-slate-500">Use this only if automatic generation did not complete after Start Work.</div>
+                      <Button className="mt-4" variant="secondary" onClick={() => void runGptAgent(false)} disabled={Boolean(runGptReason)} title={runGptReason || undefined}>{gptLoading ? "Generating..." : "Retry AI Generation"}</Button>
+                      {runGptReason && <div className="mt-3 text-[12px] leading-5 text-slate-500">Retry: {runGptReason}.</div>}
+                    </details>
                     {walletSession.error && <div className="mt-3 text-[12px] leading-5 text-danger">{walletSession.error}</div>}
                   </>
                 ) : jobStatus === 2 ? (
@@ -775,9 +814,35 @@ export default function JobDetails() {
               )}
               {jobStatus === 1 && isAgentOwner && (
                 <>
-                  <Button className="w-full" variant="secondary" onClick={() => transact("Start work", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "markRunning", args: [safeJobId!] })} disabled={Boolean(markRunningReason)} title={markRunningReason || undefined}>Start Work</Button>
+                  {!walletSession.matchesConnectedWallet && walletReady && (
+                    <Button className="w-full" variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>
+                      {walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}
+                    </Button>
+                  )}
+                  <Button className="w-full" variant="secondary" onClick={() => void startWorkAndGenerate()} disabled={Boolean(markRunningReason)} title={markRunningReason || undefined}>Start Work</Button>
                   {markRunningReason && <div className="text-[12px] leading-5 text-slate-500">Start Work: {markRunningReason}.</div>}
                 </>
+              )}
+              {jobStatus === 2 && isAgentOwner && !hasDeliverableURI && (
+                <>
+                  <Button className="w-full" variant="secondary" disabled>{gptLoading ? "Generating AI Output..." : autoRunFailed ? "AI Generation Needs Retry" : "Waiting For Saved Output"}</Button>
+                  <div className="text-[12px] leading-5 text-slate-500">ArcPilot automatically generates offchain output after Start Work. Recovery controls are available in Agent Output.</div>
+                </>
+              )}
+              {jobStatus === 2 && isAgentOwner && hasDeliverableURI && (
+                <>
+                  <Button className="w-full" onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [safeJobId!, deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>Submit Deliverable</Button>
+                  <div className="text-[12px] leading-5 text-slate-500">{submitReason ? `Submit: ${submitReason}.` : "Saved output is ready for the required agent-owner submission transaction."}</div>
+                </>
+              )}
+              {jobStatus === 3 && (
+                <>
+                  <Button className="w-full" variant="secondary" disabled>Waiting For Client Review</Button>
+                  <div className="text-[12px] leading-5 text-slate-500">The deliverable is submitted onchain. The client or evaluator can approve or open a dispute.</div>
+                </>
+              )}
+              {jobStatus === 6 && (
+                <Button className="w-full" variant="secondary" onClick={() => router.push(linkedDispute ? `/disputes/${String(linkedDispute.disputeId)}` : "/disputes")}>{linkedDispute ? "Open Dispute" : "View Disputes"}</Button>
               )}
               {jobStatus === 1 && !isAgentOwner && (
                 <>

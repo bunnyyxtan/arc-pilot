@@ -1,8 +1,9 @@
 import { ZeroAddress } from "ethers";
-import { encodeJobURI } from "../contracts/job-uri";
+import { decodeJobURI, encodeJobURI } from "../contracts/job-uri";
+import { getJobStatusLabel, normalizeJobStatus } from "../jobs/status";
 import { loggedOperation } from "../logger";
 import { getSdkContracts, getSigner, type ArcPilotNetwork } from "./arcpilot";
-import { JOB_STATUS_LABELS, type JobView } from "./types";
+import { type JobView } from "./types";
 
 export async function getJob(jobId: bigint | number | string, network?: ArcPilotNetwork) {
   const id = BigInt(jobId);
@@ -15,7 +16,8 @@ export async function getJobView(jobId: bigint | number | string, network?: ArcP
   const id = BigInt(jobId);
   return loggedOperation("sdk.jobs", "getJobView", { jobId: id, network }, async () => {
     const job = await getJob(id, network);
-    const status = Number(job.status);
+    const status = normalizeJobStatus(job.status) ?? Number(job.status);
+    const decoded = decodeJobURI(job.jobURI);
     return {
       jobId: job.jobId,
       agentId: job.agentId,
@@ -27,7 +29,8 @@ export async function getJobView(jobId: bigint | number | string, network?: ArcP
       jobURI: job.jobURI,
       deliverableURI: job.deliverableURI,
       status,
-      statusLabel: JOB_STATUS_LABELS[status] ?? "Unknown",
+      statusLabel: getJobStatusLabel(status),
+      ...(decoded?.jobClassification ? { jobClassification: decoded.jobClassification } : {}),
       createdAt: BigInt(job.createdAt),
       fundedAt: BigInt(job.fundedAt),
       runningAt: BigInt(job.runningAt),

@@ -8,6 +8,7 @@ import { linkDeliverableToIndexedJob } from "../supabase/indexed-data";
 import type { DeliverableRow } from "../supabase/types";
 import type { DeliverableType } from "./prompts";
 import { sanitizeDeliverableFields } from "./sanitize";
+import type { JobClassification } from "../jobs/classification";
 
 export type DeliverableRecord = {
   hash: `0x${string}`;
@@ -29,6 +30,7 @@ export type DeliverableRecord = {
   clientWallet?: string | null;
   agentOwnerWallet?: string | null;
   evaluatorWallet?: string | null;
+  jobClassification?: JobClassification | null;
   raw?: unknown;
   createdAt: string;
 };
@@ -181,6 +183,9 @@ export async function saveDeliverable(input: Omit<DeliverableRecord, "hash" | "c
       deliverableURI: record.deliverableURI || deliverableURI(hash),
       deliverableHash: hash,
       visibility: record.visibility ?? "restricted",
+      jobClassification: record.jobClassification,
+      client: record.clientWallet,
+      agentOwner: record.agentOwnerWallet,
       statusLabel: "Running",
       raw: {
         jobTitle: record.jobTitle,
@@ -307,6 +312,9 @@ export async function backfillLocalDeliverablesToSupabase() {
           deliverableURI: record.deliverableURI || deliverableURI(record.hash),
           deliverableHash: record.hash,
           visibility: record.visibility ?? "restricted",
+          jobClassification: record.jobClassification,
+          client: record.clientWallet,
+          agentOwner: record.agentOwnerWallet,
           raw: { source: "local-backfill" }
         });
         if (!link.ok || link.reason) warnings.push(`${record.hash}: indexed job link ${link.reason || "failed"}`);

@@ -61,6 +61,7 @@ export type JobView = {
   deliverableURI: string;
   status: number;
   statusLabel: string;
+  jobClassification?: "marketplace" | "self_use";
   createdAt: bigint;
   fundedAt: bigint;
   runningAt: bigint;
@@ -91,17 +92,7 @@ export type ClientStatsView = {
   totalBondSlashed: bigint;
 };
 
-export const JOB_STATUS_LABELS = [
-  "Open",
-  "Funded",
-  "Running",
-  "Submitted",
-  "Completed",
-  "Rejected",
-  "Disputed",
-  "Expired",
-  "Refunded"
-] as const;
+export { JOB_STATUS_LABELS } from "../jobs/status";
 
 export function bigintJson(value: unknown) {
   return JSON.parse(

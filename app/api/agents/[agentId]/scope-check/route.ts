@@ -43,6 +43,7 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
     const clientWallet = verifiedWallet || requestedClientWallet || null;
     const agentOwner = normalizeWallet(String(agent.owner));
     const selfUseAllowed = body.jobMode === "self_use" && Boolean(clientWallet && agentOwner && clientWallet === agentOwner);
+    const overrideAccepted = body.overrideAccepted === true && decision.suggestedAction === "warn";
     const insertRow = {
       chain_id: CHAIN_ID,
       agent_id: id.toString(),
@@ -56,8 +57,8 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
       scope_reason: decision.reason,
       matched_skills: decision.matchedSkills,
       missing_capabilities: decision.missingCapabilities,
-      decision: decision.suggestedAction,
-      raw: toSupabaseJson({ jobType, jobMode: body.jobMode, selfUseAllowed, metadataURI: agent.metadataURI })
+      decision: overrideAccepted ? "override_accepted" : decision.suggestedAction,
+      raw: toSupabaseJson({ jobType, jobMode: body.jobMode, selfUseAllowed, overrideAccepted, metadataURI: agent.metadataURI })
     };
     const supabase = createServiceRoleSupabaseClient();
     const { data, error } = await supabase.from("job_scope_checks").insert(insertRow).select("id").single();
@@ -68,9 +69,10 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
       agentId: id,
       scopeCheckId: data.id,
       decision: decision.suggestedAction,
-      selfUseAllowed
+      selfUseAllowed,
+      overrideAccepted
     }, "Agent scope check saved");
-    return NextResponse.json({ ok: true, scopeCheckId: data.id, agentOwner, selfUseAllowed, decision });
+    return NextResponse.json({ ok: true, scopeCheckId: data.id, agentOwner, selfUseAllowed, overrideAccepted, decision });
   } catch (error) {
     logger.error("api.agents.scopeCheck", "create:failed", { error }, "Agent scope check failed");
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "Agent scope check failed." }, { status: 500 });

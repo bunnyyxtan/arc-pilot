@@ -5,6 +5,7 @@ import { buildSystemPrompt, buildUserPrompt, isArcRelatedRequest, isUnclearJobRe
 import { looksVagueDeliverable, sanitizeDeliverableFields } from "./sanitize";
 import { getOpenAIModelConfig } from "./model-config";
 import { validateAgentScope, type AgentScopeDecision } from "../agents/scope-validator";
+import type { JobClassification } from "../jobs/classification";
 
 type RawDeliverable = {
   generatedTitle?: unknown;
@@ -122,6 +123,7 @@ export async function runAgentJob(input: {
   clientWallet?: string | null;
   agentOwnerWallet?: string | null;
   evaluatorWallet?: string | null;
+  jobClassification?: JobClassification | null;
   agentSkills?: string[];
   agentMetadata?: unknown;
 }): Promise<{

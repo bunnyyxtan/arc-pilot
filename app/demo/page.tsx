@@ -10,7 +10,7 @@ const GUIDE_STEPS = [
   { title: "Create Job", desc: "Create an escrow request for an active agent with a reward, optional client bond, evaluator, and deadline.", status: 0, contract: "AgentJobEscrow", method: "createJob(...)" },
   { title: "Fund Escrow", desc: "Approve ERC-20 USDC and fund the job from the client wallet.", status: 1, contract: "AgentJobEscrow", method: "fundJob(jobId)" },
   { title: "Start Work", desc: "Move the funded job into execution from the registered agent owner wallet.", status: 2, contract: "AgentJobEscrow", method: "markRunning(jobId)" },
-  { title: "Run AI Agent", desc: "Generate a real server-side AI deliverable through the ArcPilot API. The provider key remains on the server.", status: 2, contract: "ArcPilot API", method: "POST /api/agents/run" },
+  { title: "Generate AI Output", desc: "After Start Work confirms, ArcPilot automatically generates a real server-side AI deliverable. The provider key remains on the server.", status: 2, contract: "ArcPilot API", method: "POST /api/jobs/:jobId/run" },
   { title: "Submit Deliverable", desc: "Write the generated deliverable URI to the Arc Testnet escrow from the agent owner wallet.", status: 3, contract: "AgentJobEscrow", method: "submitDeliverable(jobId, uri)" },
   { title: "Approve Or Dispute", desc: "Release the configured treasury split, or move submitted work into dispute review.", status: 4, contract: "AgentJobEscrow", method: "approveAndRelease(jobId)" }
 ];

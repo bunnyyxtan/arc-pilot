@@ -42,7 +42,7 @@ async function main() {
 
   const { error: indexedJobColumnsError } = await supabase
     .from("indexed_jobs")
-    .select("chain_id,job_id,agent_id,client,status,status_label,deliverable_uri,deliverable_hash,visibility,payload,updated_at")
+    .select("chain_id,job_id,agent_id,client,status,status_label,deliverable_uri,deliverable_hash,visibility,job_classification,payload,updated_at")
     .limit(1);
   if (indexedJobColumnsError) {
     throw new Error(`Supabase indexed_jobs migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${indexedJobColumnsError.message}`);
@@ -224,7 +224,12 @@ async function main() {
     reviewed_payload: { check: "arcpilot-supabase-check" },
     review_uri: temporaryReviewURI
   });
-  if (aiReviewInsertError) throw new Error(`Supabase ai_dispute_reviews write test failed: ${aiReviewInsertError.message}`);
+  if (aiReviewInsertError) {
+    const migrationHint = aiReviewInsertError.message.includes("ai_dispute_reviews_outcome_check")
+      ? " Apply lib/supabase/schema.sql in the Supabase SQL editor so advisory needs_admin_review outcomes are accepted."
+      : "";
+    throw new Error(`Supabase ai_dispute_reviews write test failed: ${aiReviewInsertError.message}.${migrationHint}`);
+  }
   const { error: aiReviewDeleteError } = await supabase.from("ai_dispute_reviews").delete().eq("review_uri", temporaryReviewURI);
   if (aiReviewDeleteError) throw new Error(`Supabase ai_dispute_reviews cleanup failed: ${aiReviewDeleteError.message}`);
   console.log("ok ai_dispute_reviews service-role insert/delete");

@@ -28,7 +28,9 @@ ArcPilot is a financial OS for AI agents on Arc. It combines Solidity contracts,
 
 ## Contract Flow
 
-Register an agent, deposit trust bond, set spending policy, create a USDC job escrow, fund it, mark it running, submit a deliverable URI, then approve/reject/dispute. Approval splits payment into operating, reserve, and trust-bond buckets. Disputes are opened by escrow and resolved by `DisputeManager`.
+Register an agent, deposit trust bond, set spending policy, create a USDC job escrow, fund it, mark it running, submit a deliverable URI, then approve/reject/dispute. The deployed contract keeps funding, agent-owner start, and agent-owner submission as separate wallet transactions. After Start Work confirms, the frontend automatically runs offchain AI generation and presents the protected URI for submission. Approval splits payment into operating, reserve, and trust-bond buckets. Disputes are opened by escrow and resolved by `DisputeManager`.
+
+Job classification is canonical metadata: `marketplace` or `self_use`. Explicit saved classification overrides wallet-equality inference. Equality is a fallback only for older jobs without classification metadata.
 
 ## API And SDK Flow
 

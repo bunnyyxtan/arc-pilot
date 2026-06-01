@@ -2,6 +2,8 @@ import { logger } from "../logger";
 import { getOptionalServiceRoleSupabaseClient } from "./server";
 import type { AppEventRow, IndexedAgentRow, IndexedDisputeRow, IndexedJobRow, Json } from "./types";
 import { formatAgentDisplayId } from "../design/agent-id";
+import { decodeJobURI } from "../contracts/job-uri";
+import { normalizeJobClassification, resolveJobClassification } from "../jobs/classification";
 
 type IndexedWriteResult = {
   ok: boolean;
@@ -45,6 +47,33 @@ export function toSupabaseJson(value: unknown): Json {
 function payloadFromRow<T>(row: { payload?: Json } | null): T | null {
   if (!row) return null;
   return (row.payload && typeof row.payload === "object" ? row.payload : row) as T;
+}
+
+function indexedJobPayload<T>(row: IndexedJobRow | null): T | null {
+  const payload = payloadFromRow<Record<string, unknown>>(row);
+  if (!payload) return null;
+  return {
+    ...payload,
+    jobClassification: normalizeJobClassification(row?.job_classification) ??
+      normalizeJobClassification(payload.jobClassification) ??
+      normalizeJobClassification(payload.jobMode) ??
+      "marketplace"
+  } as T;
+}
+
+async function getStoredIndexedJobClassification(jobId: string) {
+  const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase || !jobId) return null;
+  const { data, error } = await supabase
+    .from("indexed_jobs")
+    .select("job_classification,payload")
+    .eq("job_id", jobId)
+    .maybeSingle();
+  if (error) return null;
+  const payload = data?.payload && typeof data.payload === "object" ? data.payload as Record<string, unknown> : {};
+  return normalizeJobClassification(data?.job_classification) ??
+    normalizeJobClassification(payload.jobClassification) ??
+    normalizeJobClassification(payload.jobMode);
 }
 
 async function safeWrite(label: string, write: () => PromiseLike<{ error: unknown }>): Promise<IndexedWriteResult> {
@@ -162,10 +191,21 @@ export async function upsertIndexedAgent(agent: Record<string, unknown>): Promis
 }
 
 export async function upsertIndexedJob(job: Record<string, unknown>): Promise<IndexedWriteResult> {
-  const payload = toSupabaseJson(job);
+  const jobId = String(job.jobId ?? job.job_id ?? "");
+  const decoded = typeof job.jobURI === "string" ? decodeJobURI(job.jobURI) : null;
+  const storedClassification = normalizeJobClassification(job.job_classification) ??
+    await getStoredIndexedJobClassification(jobId);
+  const jobClassification = resolveJobClassification({
+    storedClassification,
+    explicitClassification: job.jobClassification,
+    metadataClassification: decoded?.jobClassification ?? decoded?.jobMode,
+    client: job.client,
+    agentOwner: job.agentOwner ?? job.agent_owner
+  });
+  const payload = toSupabaseJson({ ...job, jobClassification });
   const row: IndexedJobRow = {
     chain_id: job.chainId !== undefined ? Number(job.chainId) : job.chain_id !== undefined ? Number(job.chain_id) : 5042002,
-    job_id: String(job.jobId ?? job.job_id ?? ""),
+    job_id: jobId,
     agent_id: job.agentId !== undefined ? String(job.agentId) : null,
     client: typeof job.client === "string" ? job.client : null,
     status: job.status !== undefined ? String(job.status) : null,
@@ -173,6 +213,7 @@ export async function upsertIndexedJob(job: Record<string, unknown>): Promise<In
     deliverable_uri: typeof job.deliverableURI === "string" ? job.deliverableURI : typeof job.deliverable_uri === "string" ? job.deliverable_uri : null,
     deliverable_hash: typeof job.deliverableHash === "string" ? job.deliverableHash : typeof job.deliverable_hash === "string" ? job.deliverable_hash : null,
     visibility: job.visibility === "public" ? "public" : job.visibility === "restricted" ? "restricted" : null,
+    job_classification: jobClassification,
     payload,
     updated_at: new Date().toISOString()
   };
@@ -188,8 +229,18 @@ export async function linkDeliverableToIndexedJob(input: {
   visibility?: "public" | "restricted";
   status?: string | number | null;
   statusLabel?: string | null;
+  jobClassification?: unknown;
+  client?: string | null;
+  agentOwner?: string | null;
   raw?: Record<string, unknown>;
 }): Promise<IndexedWriteResult> {
+  const storedClassification = await getStoredIndexedJobClassification(String(input.jobId));
+  const jobClassification = resolveJobClassification({
+    storedClassification,
+    explicitClassification: input.jobClassification,
+    client: input.client,
+    agentOwner: input.agentOwner
+  });
   const row: IndexedJobRow = {
     chain_id: input.chainId ?? 5042002,
     job_id: String(input.jobId),
@@ -199,13 +250,15 @@ export async function linkDeliverableToIndexedJob(input: {
     deliverable_uri: input.deliverableURI,
     deliverable_hash: input.deliverableHash,
     visibility: input.visibility ?? "restricted",
+    job_classification: jobClassification,
     payload: toSupabaseJson({
       ...(input.raw ?? {}),
       jobId: String(input.jobId),
       agentId: input.agentId !== undefined && input.agentId !== null ? String(input.agentId) : undefined,
       deliverableURI: input.deliverableURI,
       deliverableHash: input.deliverableHash,
-      visibility: input.visibility ?? "restricted"
+      visibility: input.visibility ?? "restricted",
+      jobClassification
     }),
     updated_at: new Date().toISOString()
   };
@@ -371,7 +424,7 @@ export async function getIndexedJobs<T = unknown>() {
     logger.warn("supabase.indexedData", "jobs:readFailed", { error }, "Supabase indexed jobs read failed");
     return [];
   }
-  return (data ?? []).map((row) => payloadFromRow<T>(row)).filter(Boolean) as T[];
+  return (data ?? []).map((row) => indexedJobPayload<T>(row as IndexedJobRow)).filter(Boolean) as T[];
 }
 
 export async function getIndexedJob<T = unknown>(jobId: string | number | bigint) {
@@ -382,7 +435,7 @@ export async function getIndexedJob<T = unknown>(jobId: string | number | bigint
     logger.warn("supabase.indexedData", "job:readFailed", { error, jobId: String(jobId) }, "Supabase indexed job read failed");
     return null;
   }
-  return payloadFromRow<T>(data);
+  return indexedJobPayload<T>(data as IndexedJobRow | null);
 }
 
 export async function getIndexedDisputes<T = unknown>() {

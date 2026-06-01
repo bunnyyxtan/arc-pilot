@@ -38,7 +38,7 @@ export async function GET() {
     if (indexedAgentColumnsError) warnings.push(`indexed_agents columns: ${indexedAgentColumnsError.message}`);
     const { error: indexedJobColumnsError } = await supabase
       .from("indexed_jobs")
-      .select("chain_id,job_id,agent_id,client,status,status_label,deliverable_uri,deliverable_hash,visibility,payload,updated_at")
+      .select("chain_id,job_id,agent_id,client,status,status_label,deliverable_uri,deliverable_hash,visibility,job_classification,payload,updated_at")
       .limit(1);
     if (indexedJobColumnsError) warnings.push(`indexed_jobs columns: ${indexedJobColumnsError.message}`);
     const { error: indexedDisputeColumnsError } = await supabase

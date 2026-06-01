@@ -14,7 +14,7 @@ import { agentJobEscrowAbi } from "../../../lib/contracts/browser-abis";
 import { getBrowserContractAddresses } from "../../../lib/contracts/browser-addresses";
 import { useArcTransaction } from "../../../lib/contracts/hooks";
 
-function encodeJobURI(input: { title: string; description: string; deliverableVisibility: "public" | "restricted"; jobMode: "marketplace" | "self_use"; scopeCheckId?: string; scopeDecision?: "allow" | "warn" | "block" }) {
+function encodeJobURI(input: { title: string; description: string; deliverableVisibility: "public" | "restricted"; jobClassification: "marketplace" | "self_use"; jobMode: "marketplace" | "self_use"; scopeCheckId?: string; scopeDecision?: "allow" | "warn" | "block" | "override_accepted" }) {
   const bytes = new TextEncoder().encode(JSON.stringify(input));
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
   return `arcpilot-job://${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
@@ -33,6 +33,7 @@ function detectJobType(title: string, description: string) {
 type ScopeResult = {
   scopeCheckId: string;
   selfUseAllowed: boolean;
+  overrideAccepted?: boolean;
   decision: {
     inScope: boolean;
     confidence: "low" | "medium" | "high";
@@ -52,7 +53,7 @@ export default function CreateJob() {
   const [formData, setFormData] = useState({ agentId: "", title: "", description: "", reward: "", clientBond: "", durationMinutes: "60", evaluator: "", deliverableVisibility: "restricted" as "public" | "restricted", jobMode: "marketplace" as "marketplace" | "self_use" });
   const [scopeResult, setScopeResult] = useState<ScopeResult | null>(null);
   const [scopeFingerprint, setScopeFingerprint] = useState("");
-  const [scopeOverride, setScopeOverride] = useState(false);
+  const [scopeOverrideAccepted, setScopeOverrideAccepted] = useState(false);
   const [scopeLoading, setScopeLoading] = useState(false);
   const [scopeError, setScopeError] = useState<string | null>(null);
 
@@ -64,7 +65,7 @@ export default function CreateJob() {
   const currentScopeFingerprint = JSON.stringify([formData.agentId, formData.title.trim(), formData.description.trim(), formData.jobMode]);
   const activeScopeResult = scopeFingerprint === currentScopeFingerprint ? scopeResult : null;
 
-  async function checkScope() {
+  async function checkScope(overrideAccepted = false) {
     setScopeLoading(true);
     setScopeError(null);
     try {
@@ -76,7 +77,8 @@ export default function CreateJob() {
           jobDescription: formData.description,
           jobType: detectJobType(formData.title, formData.description),
           jobMode: formData.jobMode,
-          clientWallet: wallet.address || null
+          clientWallet: wallet.address || null,
+          overrideAccepted
         })
       });
       const data = await response.json();
@@ -84,7 +86,7 @@ export default function CreateJob() {
       const next = data as ScopeResult;
       setScopeResult(next);
       setScopeFingerprint(currentScopeFingerprint);
-      setScopeOverride(false);
+      setScopeOverrideAccepted(next.overrideAccepted === true);
       return next;
     } catch (error) {
       setScopeError(error instanceof Error ? error.message : "Agent scope check failed.");
@@ -94,13 +96,10 @@ export default function CreateJob() {
     }
   }
 
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  async function createValidatedJob(checked: ScopeResult, overrideAccepted = scopeOverrideAccepted) {
     if (!addresses) return;
-    const checked = activeScopeResult ?? await checkScope();
-    if (!checked) return;
     const blockedMarketplace = checked.decision.suggestedAction === "block" && !checked.selfUseAllowed;
-    const warningNeedsConfirmation = checked.decision.suggestedAction === "warn" && !scopeOverride;
+    const warningNeedsConfirmation = checked.decision.suggestedAction === "warn" && !overrideAccepted;
     if (blockedMarketplace || warningNeedsConfirmation) return;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + Number(formData.durationMinutes) * 60);
     const hash = await run("Create job", {
@@ -113,10 +112,25 @@ export default function CreateJob() {
         parseUnits(formData.reward, 6),
         parseUnits(formData.clientBond || "0", 6),
         deadline,
-        encodeJobURI({ title: formData.title.trim(), description: formData.description.trim(), deliverableVisibility: formData.deliverableVisibility, jobMode: formData.jobMode, scopeCheckId: checked.scopeCheckId, scopeDecision: checked.decision.suggestedAction })
+        encodeJobURI({ title: formData.title.trim(), description: formData.description.trim(), deliverableVisibility: formData.deliverableVisibility, jobClassification: formData.jobMode, jobMode: formData.jobMode, scopeCheckId: checked.scopeCheckId, scopeDecision: overrideAccepted && checked.decision.suggestedAction === "warn" ? "override_accepted" : checked.decision.suggestedAction })
       ]
     });
     if (hash) router.push("/jobs");
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const checked = activeScopeResult ?? await checkScope();
+    if (checked) await createValidatedJob(checked);
+  }
+
+  async function continueAfterWarning() {
+    const checked = await checkScope(true);
+    if (checked) await createValidatedJob(checked, true);
+  }
+
+  function resetScopeOverride() {
+    setScopeOverrideAccepted(false);
   }
 
   const unavailable = !wallet.isConnected ? "Connect Wallet to create a job." : !wallet.correctNetwork ? "Switch to Arc Testnet to create a job." : undefined;
@@ -133,14 +147,14 @@ export default function CreateJob() {
             </div>
           </div>
           <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            <Input label="Agent ID" placeholder="1" type="number" min="1" required value={formData.agentId} onChange={(event) => setFormData({ ...formData, agentId: event.target.value })} />
+            <Input label="Agent ID" placeholder="1" type="number" min="1" required value={formData.agentId} onChange={(event) => { setFormData({ ...formData, agentId: event.target.value }); resetScopeOverride(); }} />
             <Input label="Evaluator Wallet (Optional)" placeholder="Defaults to your wallet" value={formData.evaluator} onChange={(event) => setFormData({ ...formData, evaluator: event.target.value })} />
             <Input label="Reward (USDC)" placeholder="25" type="number" step="0.000001" min="0.000001" required value={formData.reward} onChange={(event) => setFormData({ ...formData, reward: event.target.value })} />
             <Input label="Client Bond (USDC)" placeholder="5" type="number" step="0.000001" min="0" required value={formData.clientBond} onChange={(event) => setFormData({ ...formData, clientBond: event.target.value })} />
             <Input label="Deadline (Minutes)" placeholder="60" type="number" min="1" required value={formData.durationMinutes} onChange={(event) => setFormData({ ...formData, durationMinutes: event.target.value })} />
-            <Input label="Job Title" placeholder="Analyze Arc agentic economy opportunity" required value={formData.title} onChange={(event) => setFormData({ ...formData, title: event.target.value })} />
+            <Input label="Job Title" placeholder="Analyze Arc agentic economy opportunity" required value={formData.title} onChange={(event) => { setFormData({ ...formData, title: event.target.value }); resetScopeOverride(); }} />
           </div>
-          <Textarea label="Job Description" placeholder="Describe the required deliverable..." required value={formData.description} onChange={(event) => setFormData({ ...formData, description: event.target.value })} />
+          <Textarea label="Job Description" placeholder="Describe the required deliverable..." required value={formData.description} onChange={(event) => { setFormData({ ...formData, description: event.target.value }); resetScopeOverride(); }} />
           <div className="rounded-xl border border-borderDark bg-black/20 p-5">
             <label className="text-label text-slate-400">Deliverable visibility</label>
             <select
@@ -163,7 +177,7 @@ export default function CreateJob() {
             <select
               className="mt-3 w-full rounded-lg border border-borderDark bg-panelSolid px-3 py-2.5 text-[13px] leading-5 text-white focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/50"
               value={formData.jobMode}
-              onChange={(event) => setFormData({ ...formData, jobMode: event.target.value === "self_use" ? "self_use" : "marketplace" })}
+              onChange={(event) => { setFormData({ ...formData, jobMode: event.target.value === "self_use" ? "self_use" : "marketplace" }); resetScopeOverride(); }}
             >
               <option value="marketplace">Marketplace job</option>
               <option value="self_use">Self-use / test run</option>
@@ -183,9 +197,10 @@ export default function CreateJob() {
               <div className="mt-3 text-[13px] leading-6 text-slate-300">{activeScopeResult.decision.reason} Pick a more suitable agent or edit your request.</div>
               {activeScopeResult.selfUseAllowed && <div className="mt-2 text-[12px] leading-5 text-warning">Explicit self-use mode allows this auditable test run, but the runner will return a scope refusal instead of unrelated work.</div>}
               <div className="mt-4 flex flex-wrap gap-3">
-                <Button type="button" variant="secondary" onClick={() => { setScopeResult(null); setScopeOverride(false); }}>Edit Request</Button>
+                <Button type="button" variant="secondary" onClick={() => { setScopeResult(null); setScopeOverrideAccepted(false); }}>Edit Request</Button>
                 <Button type="button" variant="secondary" onClick={() => router.push("/agents")}>Choose Another Agent</Button>
-                {activeScopeResult.decision.suggestedAction === "warn" && !scopeOverride && <Button type="button" onClick={() => setScopeOverride(true)}>Continue Anyway</Button>}
+                {activeScopeResult.decision.suggestedAction === "warn" && !scopeOverrideAccepted && <Button type="button" onClick={() => void continueAfterWarning()}>Continue Anyway</Button>}
+                {activeScopeResult.decision.suggestedAction === "warn" && scopeOverrideAccepted && <div className="self-center text-[12px] text-success">Warning accepted. Creating job...</div>}
               </div>
             </div>
           )}

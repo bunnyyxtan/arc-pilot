@@ -8,6 +8,8 @@ import { getAgentReviewForJob, getAgentReviews, getAgentReviewSummaries } from "
 import { toSupabaseJson } from "../../../../../lib/supabase/indexed-data";
 import { createServiceRoleSupabaseClient } from "../../../../../lib/supabase/server";
 import { routeBigInt } from "../../../_utils";
+import { decodeJobURI } from "../../../../../lib/contracts/job-uri";
+import { shouldCountTowardPublicRatings } from "../../../../../lib/jobs/classification";
 
 const CHAIN_ID = 5042002;
 const ALLOWED_TAGS = new Set(["fast", "accurate", "high quality", "clear communication", "needs improvement"]);
@@ -62,7 +64,12 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
     if (job.agentId !== id) return NextResponse.json({ ok: false, error: "This job does not belong to the selected agent." }, { status: 400 });
     if (![4, 6].includes(job.status)) return NextResponse.json({ ok: false, error: "Reviews can be submitted only after approval or after a dispute is opened." }, { status: 409 });
     if (normalizeWallet(String(job.client)) !== viewer) return NextResponse.json({ ok: false, error: "Only the job client can review this agent." }, { status: 403 });
-    if (normalizeWallet(String(agent.owner)) === viewer) return NextResponse.json({ ok: false, error: "Self-use jobs do not count toward public agent ratings." }, { status: 409 });
+    const decoded = decodeJobURI(job.jobURI);
+    if (!shouldCountTowardPublicRatings({
+      metadataClassification: decoded?.jobClassification ?? decoded?.jobMode,
+      clientWallet: job.client,
+      agentOwnerWallet: agent.owner
+    })) return NextResponse.json({ ok: false, error: "Self-use jobs do not count toward public agent ratings." }, { status: 409 });
     const reviewContext = job.status === 6 ? "dispute" : "approval";
     const insertRow = {
       chain_id: CHAIN_ID,

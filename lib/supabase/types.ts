@@ -54,7 +54,7 @@ export type JobScopeCheckRow = {
   scope_reason: string;
   matched_skills?: Json;
   missing_capabilities?: Json;
-  decision: "allow" | "warn" | "block";
+  decision: "allow" | "warn" | "block" | "override_accepted";
   raw?: Json;
   created_at?: string;
 };
@@ -123,6 +123,7 @@ export type IndexedJobRow = {
   deliverable_uri?: string | null;
   deliverable_hash?: string | null;
   visibility?: "public" | "restricted" | null;
+  job_classification?: "marketplace" | "self_use" | null;
   payload: Json;
   updated_at?: string;
 };

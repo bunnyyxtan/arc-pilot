@@ -8,9 +8,10 @@ import { isDeliverableType } from "../../../../../lib/openai/prompts";
 import { getAgent } from "../../../../../lib/sdk/agents";
 import { getJob } from "../../../../../lib/sdk/jobs";
 import { submitDeliverable } from "../../../../../lib/sdk/jobs";
-import { getIndexedJobDeliverable, getLatestDeliverableForJob } from "../../../../../lib/supabase/indexed-data";
+import { getIndexedJob, getIndexedJobDeliverable, getLatestDeliverableForJob } from "../../../../../lib/supabase/indexed-data";
 import { loadAgentScopeProfile } from "../../../../../lib/agents/profile";
 import { completeJobRegeneration, reserveJobRegeneration } from "../../../../../lib/jobs/regenerations";
+import { JOB_STATUS, getJobStatusLabel, normalizeJobStatus } from "../../../../../lib/jobs/status";
 import { bodyPrivateKey, fail, ok, readJson, routeBigInt } from "../../../_utils";
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
@@ -24,6 +25,16 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     const job = await getJob(id);
     const agent = await getAgent(job.agentId);
     const decoded = decodeJobURI(job.jobURI);
+    const indexedJob = await getIndexedJob<Record<string, unknown>>(id);
+    const liveStatus = normalizeJobStatus(job.status);
+    logger.info("api.jobs.run", "run:liveState", {
+      jobId: id,
+      liveStatus,
+      liveStatusLabel: getJobStatusLabel(job.status),
+      mappedStatus: JOB_STATUS.RUNNING,
+      indexedStatus: indexedJob?.status ?? null,
+      indexedStatusLabel: indexedJob?.statusLabel ?? null
+    }, "Loaded live onchain job state for AI run");
     const verifiedWallet = normalizeWallet(getVerifiedWalletFromRequest(request));
     if (!verifiedWallet) {
       return fail(new Error("Verify the connected agent-owner wallet session before running the AI agent."), 401, "api.jobs.run", "run");
@@ -31,7 +42,7 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     if (verifiedWallet !== normalizeWallet(String(agent.owner))) {
       return fail(new Error("The verified wallet session is not the registered agent owner."), 403, "api.jobs.run", "run");
     }
-    if (job.status !== 2) {
+    if (liveStatus !== JOB_STATUS.RUNNING) {
       return fail(new Error("AI output can be generated only while the job is Running."), 409, "api.jobs.run", "run");
     }
 
@@ -107,8 +118,8 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       visibility: decoded?.deliverableVisibility === "public" ? "public" : "restricted",
       clientWallet: String(job.client || ""),
       agentOwnerWallet: String(agent.owner || ""),
-      evaluatorWallet: String(job.evaluator || "")
-      ,
+      evaluatorWallet: String(job.evaluator || ""),
+      jobClassification: decoded?.jobClassification ?? decoded?.jobMode,
       agentSkills: scopeProfile.skills,
       agentMetadata: scopeProfile.metadata
     });
