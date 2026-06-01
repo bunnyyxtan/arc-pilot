@@ -10,6 +10,7 @@ import { cleanChecklistItem, parseContentSections, stripMarkdown, type ContentSe
 import { TxStatus } from "../../../components/shared/TxStatus";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
+import { logger } from "../../../lib/logger";
 
 type AccessMode = "full" | "preview" | "locked";
 type DeliverableMode = "draft" | "preview" | "full" | "locked" | "disputed";
@@ -98,6 +99,7 @@ export default function DeliverablePage() {
   const { tx, run, wallet } = useArcTransaction();
   const walletSession = useWalletSession();
   const hash = String(params?.hash || "");
+  const validHash = /^0x[a-fA-F0-9]{64}$/.test(hash);
   const [response, setResponse] = useState<DeliverableResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +109,7 @@ export default function DeliverablePage() {
     setLoading(true);
     setError(null);
     try {
+      if (!validHash) throw new Error("Invalid deliverable hash.");
       // Do not bypass deliverable API access control. The API reads the verified httpOnly wallet session.
       const apiResponse = await fetch(`/api/deliverables/${hash}`, { cache: "no-store" });
       const data = await apiResponse.json() as DeliverableResponse;
@@ -115,11 +118,12 @@ export default function DeliverablePage() {
       }
       setResponse(data);
     } catch (loadError) {
+      logger.warn("ui.deliverables.detail", "load:failed", { hash, loadError }, "Deliverable detail failed to load");
       setError(loadError instanceof Error ? loadError.message : "Unable to load deliverable.");
     } finally {
       setLoading(false);
     }
-  }, [hash, walletSession.verifiedWallet]);
+  }, [hash, validHash, walletSession.verifiedWallet]);
 
   useEffect(() => { load(); }, [load]);
 

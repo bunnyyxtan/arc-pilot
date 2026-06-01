@@ -42,6 +42,10 @@ export type DeliverableReadResult = {
 
 export const DELIVERABLES_DIR = resolve("data/deliverables");
 
+function allowLocalDeliverableFallback() {
+  return process.env.NODE_ENV !== "production";
+}
+
 export function deliverableURI(hash: `0x${string}`) {
   return `local-deliverable://${hash}`;
 }
@@ -143,21 +147,29 @@ export async function saveDeliverable(input: Omit<DeliverableRecord, "hash" | "c
 
   let supabaseSaved = false;
   const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase && !allowLocalDeliverableFallback()) {
+    throw new Error("Supabase deliverable storage is required in production. Check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+  }
   if (supabase) {
     const { error } = await supabase.from("deliverables").upsert(toSupabaseRow(record), { onConflict: "deliverable_hash" });
     if (error) {
+      if (!allowLocalDeliverableFallback()) {
+        throw new Error(`Supabase deliverable save failed in production: ${error.message}`);
+      }
       logger.warn("openai.deliverable", "save:supabaseFailed", { deliverableHash: hash, error }, "Supabase deliverable save failed; falling back to local JSON");
     } else {
       supabaseSaved = true;
     }
   }
 
-  try {
-    await saveLocalDeliverable(record);
-  } catch (error) {
-    logger.warn("openai.deliverable", "save:localFailed", { deliverableHash: hash, error }, "Local deliverable backup save failed");
-    if (!supabaseSaved) {
-      throw error;
+  if (allowLocalDeliverableFallback()) {
+    try {
+      await saveLocalDeliverable(record);
+    } catch (error) {
+      logger.warn("openai.deliverable", "save:localFailed", { deliverableHash: hash, error }, "Local deliverable backup save failed");
+      if (!supabaseSaved) {
+        throw error;
+      }
     }
   }
 
@@ -199,6 +211,9 @@ export async function readDeliverableWithSource(hash: string): Promise<Deliverab
 
   const filepath = resolve(DELIVERABLES_DIR, `${hash}.json`);
   const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase && !allowLocalDeliverableFallback()) {
+    throw new Error("Supabase deliverable storage is required in production. Check NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+  }
   if (supabase) {
     const { data, error } = await supabase
       .from("deliverables")
@@ -207,6 +222,9 @@ export async function readDeliverableWithSource(hash: string): Promise<Deliverab
       .maybeSingle();
 
     if (error) {
+      if (!allowLocalDeliverableFallback()) {
+        throw new Error(`Supabase deliverable read failed in production: ${error.message}`);
+      }
       logger.warn("openai.deliverable", "read:supabaseFailed", { hash, error }, "Supabase deliverable read failed; falling back to local JSON");
     } else if (data) {
       logger.info("openai.deliverable", "read:supabaseSuccess", { hash }, "Deliverable loaded from Supabase");
@@ -214,7 +232,7 @@ export async function readDeliverableWithSource(hash: string): Promise<Deliverab
     }
   }
 
-  if (!existsSync(filepath)) {
+  if (!allowLocalDeliverableFallback() || !existsSync(filepath)) {
     logger.info("openai.deliverable", "read:notFound", { hash }, "Deliverable file was not found");
     return null;
   }
@@ -229,6 +247,7 @@ export async function readDeliverable(hash: string) {
 }
 
 export async function findLocalDeliverableForJob(jobId: string | number | bigint) {
+  if (!allowLocalDeliverableFallback()) return null;
   const id = String(jobId);
   if (!existsSync(DELIVERABLES_DIR)) return null;
   const { readdir } = await import("node:fs/promises");
@@ -252,4 +271,50 @@ export async function findLocalDeliverableForJob(jobId: string | number | bigint
     deliverableHash: latest.hash,
     visibility: latest.visibility ?? ("restricted" as const)
   };
+}
+
+export async function backfillLocalDeliverablesToSupabase() {
+  const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase) {
+    return { found: 0, saved: 0, warnings: ["Supabase is not configured."] };
+  }
+  if (!existsSync(DELIVERABLES_DIR)) {
+    return { found: 0, saved: 0, warnings: [] as string[] };
+  }
+
+  const { readdir } = await import("node:fs/promises");
+  const files = (await readdir(DELIVERABLES_DIR)).filter((file) => file.endsWith(".json"));
+  const warnings: string[] = [];
+  let saved = 0;
+  for (const file of files) {
+    try {
+      const record = JSON.parse(await readFile(resolve(DELIVERABLES_DIR, file), "utf8")) as DeliverableRecord;
+      if (!/^0x[a-fA-F0-9]{64}$/.test(record.hash)) {
+        warnings.push(`${file}: invalid deliverable hash`);
+        continue;
+      }
+      const { error } = await supabase.from("deliverables").upsert(toSupabaseRow(record), { onConflict: "deliverable_hash" });
+      if (error) {
+        warnings.push(`${record.hash}: ${error.message}`);
+        continue;
+      }
+      saved += 1;
+      if (record.jobId) {
+        const link = await linkDeliverableToIndexedJob({
+          chainId: record.chainId ?? 5042002,
+          jobId: record.jobId,
+          agentId: record.agentId ?? null,
+          deliverableURI: record.deliverableURI || deliverableURI(record.hash),
+          deliverableHash: record.hash,
+          visibility: record.visibility ?? "restricted",
+          raw: { source: "local-backfill" }
+        });
+        if (!link.ok || link.reason) warnings.push(`${record.hash}: indexed job link ${link.reason || "failed"}`);
+      }
+    } catch (error) {
+      warnings.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  logger.info("openai.deliverable", "backfill:complete", { found: files.length, saved, warnings: warnings.length }, "Local deliverable Supabase backfill completed");
+  return { found: files.length, saved, warnings };
 }

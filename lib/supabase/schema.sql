@@ -1,6 +1,143 @@
 -- ArcPilot Supabase schema notes.
 -- Run these statements in Supabase SQL editor when enabling persistence.
 
+create table if not exists deliverables (
+  deliverable_hash text primary key,
+  deliverable_uri text unique not null,
+  chain_id numeric default 5042002,
+  job_id numeric,
+  agent_id numeric,
+  agent_name text not null,
+  agent_category text not null,
+  job_title text not null,
+  job_description text not null,
+  deliverable_type text not null,
+  generated_title text not null,
+  generated_content text not null,
+  quality_checklist jsonb default '[]'::jsonb,
+  created_by_wallet text,
+  tx_hash text,
+  visibility text default 'restricted',
+  client_wallet text,
+  agent_owner_wallet text,
+  evaluator_wallet text,
+  raw jsonb default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+
+create table if not exists indexed_agents (
+  chain_id numeric default 5042002,
+  agent_id numeric primary key,
+  display_id text,
+  owner_wallet text,
+  owner text,
+  name text,
+  category text,
+  skills jsonb default '[]'::jsonb,
+  metadata_uri text,
+  operating_wallet text,
+  reserve_wallet text,
+  active boolean,
+  access_mode text default 'public',
+  trust_bond numeric default 0,
+  lifetime_earned numeric default 0,
+  completed_jobs numeric default 0,
+  disputed_jobs numeric default 0,
+  avg_score numeric default 0,
+  reputation_score numeric default 0,
+  created_at_onchain numeric,
+  payload jsonb default '{}'::jsonb,
+  raw jsonb default '{}'::jsonb,
+  updated_at timestamptz default now()
+);
+
+alter table indexed_agents
+  add column if not exists chain_id numeric default 5042002,
+  add column if not exists display_id text,
+  add column if not exists owner_wallet text,
+  add column if not exists skills jsonb default '[]'::jsonb,
+  add column if not exists metadata_uri text,
+  add column if not exists operating_wallet text,
+  add column if not exists reserve_wallet text,
+  add column if not exists access_mode text default 'public',
+  add column if not exists trust_bond numeric default 0,
+  add column if not exists lifetime_earned numeric default 0,
+  add column if not exists completed_jobs numeric default 0,
+  add column if not exists disputed_jobs numeric default 0,
+  add column if not exists avg_score numeric default 0,
+  add column if not exists reputation_score numeric default 0,
+  add column if not exists created_at_onchain numeric,
+  add column if not exists raw jsonb default '{}'::jsonb;
+
+create index if not exists indexed_agents_chain_id_idx on indexed_agents(chain_id);
+create index if not exists indexed_agents_owner_wallet_idx on indexed_agents(owner_wallet);
+
+create table if not exists indexed_jobs (
+  chain_id numeric default 5042002,
+  job_id numeric primary key,
+  agent_id numeric,
+  client text,
+  status text,
+  status_label text,
+  deliverable_uri text,
+  deliverable_hash text,
+  visibility text default 'restricted',
+  payload jsonb default '{}'::jsonb,
+  updated_at timestamptz default now()
+);
+
+alter table indexed_jobs
+  add column if not exists chain_id numeric default 5042002,
+  add column if not exists agent_id numeric,
+  add column if not exists client text,
+  add column if not exists status text,
+  add column if not exists status_label text,
+  add column if not exists deliverable_uri text,
+  add column if not exists deliverable_hash text,
+  add column if not exists visibility text default 'restricted',
+  add column if not exists payload jsonb default '{}'::jsonb,
+  add column if not exists updated_at timestamptz default now();
+
+create index if not exists indexed_jobs_chain_id_idx on indexed_jobs(chain_id);
+create index if not exists indexed_jobs_agent_id_idx on indexed_jobs(agent_id);
+create index if not exists indexed_jobs_client_idx on indexed_jobs(client);
+
+create table if not exists indexed_disputes (
+  dispute_id numeric primary key,
+  job_id numeric,
+  opened_by text,
+  outcome text,
+  resolved boolean default false,
+  payload jsonb default '{}'::jsonb,
+  updated_at timestamptz default now()
+);
+
+alter table indexed_disputes
+  add column if not exists job_id numeric,
+  add column if not exists opened_by text,
+  add column if not exists outcome text,
+  add column if not exists resolved boolean default false,
+  add column if not exists payload jsonb default '{}'::jsonb,
+  add column if not exists updated_at timestamptz default now();
+
+create index if not exists indexed_disputes_job_id_idx on indexed_disputes(job_id);
+
+create table if not exists app_events (
+  id uuid primary key default gen_random_uuid(),
+  event_type text not null,
+  source text,
+  payload jsonb default '{}'::jsonb,
+  event_key text,
+  created_at timestamptz default now()
+);
+
+alter table app_events
+  add column if not exists source text,
+  add column if not exists payload jsonb default '{}'::jsonb,
+  add column if not exists event_key text;
+
+create unique index if not exists app_events_event_key_idx on app_events(event_key) where event_key is not null;
+
 create table if not exists agent_metadata (
   id uuid primary key default gen_random_uuid(),
   chain_id numeric default 5042002,

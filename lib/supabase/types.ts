@@ -40,12 +40,28 @@ export type AgentMetadataRow = {
 };
 
 export type IndexedAgentRow = {
+  chain_id?: number | null;
   agent_id: string;
+  display_id?: string | null;
+  owner_wallet?: string | null;
   owner?: string | null;
   name?: string | null;
   category?: string | null;
+  skills?: Json;
+  metadata_uri?: string | null;
+  operating_wallet?: string | null;
+  reserve_wallet?: string | null;
   active?: boolean | null;
+  access_mode?: string | null;
+  trust_bond?: string | null;
+  lifetime_earned?: string | null;
+  completed_jobs?: string | null;
+  disputed_jobs?: string | null;
+  avg_score?: string | null;
+  reputation_score?: string | null;
+  created_at_onchain?: string | null;
   payload: Json;
+  raw?: Json;
   updated_at?: string;
 };
 
@@ -75,6 +91,7 @@ export type IndexedDisputeRow = {
 
 export type AppEventRow = {
   id?: string;
+  event_key?: string | null;
   event_type: string;
   source: string;
   payload: Json;

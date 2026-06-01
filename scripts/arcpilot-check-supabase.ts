@@ -30,25 +30,46 @@ async function main() {
     console.log(`ok ${table}`);
   }
 
+  const { error: indexedAgentColumnsError } = await supabase
+    .from("indexed_agents")
+    .select("chain_id,agent_id,display_id,owner_wallet,name,category,metadata_uri,trust_bond,lifetime_earned,completed_jobs,reputation_score,raw")
+    .limit(1);
+  if (indexedAgentColumnsError) {
+    throw new Error(`Supabase indexed_agents migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${indexedAgentColumnsError.message}`);
+  }
+  console.log("ok indexed_agents canonical columns");
+
+  const { error: appEventsColumnsError } = await supabase
+    .from("app_events")
+    .select("event_type,source,payload,event_key")
+    .limit(1);
+  if (appEventsColumnsError) {
+    throw new Error(`Supabase app_events migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${appEventsColumnsError.message}`);
+  }
+  console.log("ok app_events source/payload/event_key columns");
+
+  const { error: deliverableColumnsError } = await supabase
+    .from("deliverables")
+    .select("visibility,client_wallet,agent_owner_wallet,evaluator_wallet")
+    .limit(1);
+  if (deliverableColumnsError) {
+    throw new Error(`Supabase deliverables migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${deliverableColumnsError.message}`);
+  }
+  console.log("ok deliverables access-control columns");
+
   const createdAt = new Date().toISOString();
   const insertPayload: Record<string, unknown> = {
     event_type: "supabase_check",
     source: "script",
     created_at: createdAt
   };
-  let { error: insertError } = await supabase.from("app_events").insert({
+  const { error: insertError } = await supabase.from("app_events").insert({
     ...insertPayload,
-    payload: { check: "arcpilot-supabase-check" }
+    payload: { check: "arcpilot-supabase-check" },
+    event_key: `supabase_check:${createdAt}`
   });
-  if (insertError?.message.includes("payload")) {
-    ({ error: insertError } = await supabase.from("app_events").insert(insertPayload));
-  }
   if (insertError) {
-    if (insertError.message.includes("schema cache") || insertError.message.includes("column")) {
-      console.log(`warning app_events write test skipped: ${insertError.message}`);
-    } else {
-      throw new Error(`Supabase write test failed: ${insertError.message}`);
-    }
+    throw new Error(`Supabase app_events write test failed: ${insertError.message}`);
   } else {
     const { error: deleteError } = await supabase
       .from("app_events")

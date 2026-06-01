@@ -23,10 +23,13 @@ import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
 import { Section } from "../../../components/ui/Section";
+import { toBigIntSafe } from "../../../lib/format/ids";
+import { logger } from "../../../lib/logger";
 
 export default function DisputeDetails() {
   const params = useParams();
   const disputeId = params?.disputeId as string;
+  const safeDisputeId = toBigIntSafe(disputeId);
   const addresses = getBrowserContractAddresses();
   const publicClient = usePublicClient({ chainId: arcTestnet.id });
   const { tx, run, wallet } = useArcTransaction();
@@ -52,13 +55,63 @@ export default function DisputeDetails() {
   const [deliverablePreview, setDeliverablePreview] = useState<{ generated_title?: string; executive_summary?: string } | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      if (!publicClient || !addresses) throw new Error("Arc Testnet contracts not configured.");
-      const nextDispute = await readDisputeView(publicClient, addresses, BigInt(disputeId));
-      const nextJob = await readJobView(publicClient, addresses, nextDispute.jobId);
-      const nextAgent = await readAgentView(publicClient, addresses, nextJob.agentId);
+      if (!safeDisputeId) throw new Error("Invalid dispute ID.");
+      let nextDispute: any = null;
+      try {
+        const response = await fetch(`/api/disputes/${disputeId}`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && data?.dispute) nextDispute = data.dispute;
+      } catch (apiError) {
+        logger.warn("ui.disputes.detail", "indexedRead:failed", { disputeId, apiError }, "Indexed dispute fallback is unavailable");
+      }
+      if (publicClient && addresses) {
+        try {
+          nextDispute = await readDisputeView(publicClient, addresses, safeDisputeId);
+        } catch (onchainError) {
+          if (!nextDispute) throw onchainError;
+          logger.warn("ui.disputes.detail", "onchainRead:fallback", { disputeId, onchainError }, "Using indexed dispute after Arc Testnet read failed");
+        }
+      }
+      if (!nextDispute) throw new Error(addresses ? "Arc Testnet dispute not found." : "Arc Testnet contracts not configured.");
+      let nextJob: any = null;
+      try {
+        const response = await fetch(`/api/jobs/${String(nextDispute.jobId)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && data?.job) nextJob = data.job;
+      } catch (apiError) {
+        logger.warn("ui.disputes.detail", "jobIndexedRead:failed", { disputeId, jobId: String(nextDispute.jobId), apiError }, "Indexed job fallback is unavailable");
+      }
+      if (publicClient && addresses) {
+        try {
+          nextJob = await readJobView(publicClient, addresses, BigInt(nextDispute.jobId));
+        } catch (onchainError) {
+          if (!nextJob) throw onchainError;
+          logger.warn("ui.disputes.detail", "jobOnchainRead:fallback", { disputeId, jobId: String(nextDispute.jobId), onchainError }, "Using indexed job after Arc Testnet read failed");
+        }
+      }
+      if (!nextJob) throw new Error("Linked job could not be loaded.");
+      let nextAgent: any = null;
+      try {
+        const response = await fetch(`/api/agents/${String(nextJob.agentId)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && data?.agent) nextAgent = data.agent;
+      } catch (apiError) {
+        logger.warn("ui.disputes.detail", "agentIndexedRead:failed", { disputeId, agentId: String(nextJob.agentId), apiError }, "Indexed agent fallback is unavailable");
+      }
+      if (publicClient && addresses) {
+        try {
+          nextAgent = await readAgentView(publicClient, addresses, BigInt(nextJob.agentId));
+        } catch (onchainError) {
+          if (!nextAgent) throw onchainError;
+          logger.warn("ui.disputes.detail", "agentOnchainRead:fallback", { disputeId, agentId: String(nextJob.agentId), onchainError }, "Using indexed agent after Arc Testnet read failed");
+        }
+      }
+      if (!nextAgent) throw new Error("Assigned agent could not be loaded.");
       let resolver = false;
-      if (wallet.address) {
+      if (wallet.address && publicClient && addresses) {
         const [listed, owner] = await Promise.all([
           publicClient.readContract({ address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolvers", args: [wallet.address] }),
           publicClient.readContract({ address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "owner" })
@@ -115,11 +168,12 @@ export default function DisputeDetails() {
         setDeliverablePreview(null);
       }
     } catch (loadError) {
+      logger.warn("ui.disputes.detail", "load:failed", { disputeId, contractsConfigured: Boolean(addresses), loadError }, "Dispute detail failed to load");
       setError(loadError instanceof Error ? loadError.message : "Failed to read Arc Testnet dispute.");
     } finally {
       setLoading(false);
     }
-  }, [addresses, disputeId, publicClient, wallet.address, walletSession.verifiedWallet]);
+  }, [addresses, disputeId, publicClient, safeDisputeId, wallet.address, walletSession.verifiedWallet]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -193,11 +247,11 @@ export default function DisputeDetails() {
   async function executeAIRecommendation() {
     if (!aiReview) return;
     if (aiReview.recommended_outcome === "agent_wins") {
-      await transact("Execute AI recommendation: agent wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [BigInt(disputeId)] });
+      await transact("Execute AI recommendation: agent wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] });
     } else if (aiReview.recommended_outcome === "client_wins") {
-      await transact("Execute AI recommendation: client wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [BigInt(disputeId), parseUnits(aiReview.slash_amount || "0", 6)] });
+      await transact("Execute AI recommendation: client wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(aiReview.slash_amount || "0", 6)] });
     } else if (aiReview.recommended_outcome === "split") {
-      await transact("Execute AI recommendation: split", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [BigInt(disputeId), BigInt(aiReview.agent_bps || 0), BigInt(aiReview.client_bps || 0)] });
+      await transact("Execute AI recommendation: split", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(aiReview.agent_bps || 0), BigInt(aiReview.client_bps || 0)] });
     }
   }
 
@@ -266,9 +320,9 @@ export default function DisputeDetails() {
               <Button onClick={executeAIRecommendation} disabled={resolverDisabled || aiReview.recommended_outcome === "manual_review_required"}>Execute AI Recommendation</Button>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
-              <Button variant="success" onClick={() => transact("Resolve agent wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [BigInt(disputeId)] })} disabled={resolverDisabled}>Resolve Agent Wins</Button>
-              <div><Input label="Slash Amount (USDC)" type="number" step="0.000001" min="0" value={slashAmount} onChange={(event) => setSlashAmount(event.target.value)} /><Button className="mt-3 w-full" variant="danger" onClick={() => transact("Resolve client wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [BigInt(disputeId), parseUnits(slashAmount || "0", 6)] })} disabled={resolverDisabled}>Resolve Client Wins</Button></div>
-              <div><div className="grid grid-cols-2 gap-3"><Input label="Agent BPS" type="number" value={agentBps} onChange={(event) => setAgentBps(event.target.value)} /><Input label="Client BPS" type="number" value={clientBps} onChange={(event) => setClientBps(event.target.value)} /></div><Button className="mt-3 w-full" variant="secondary" onClick={() => transact("Resolve split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [BigInt(disputeId), BigInt(agentBps), BigInt(clientBps)] })} disabled={resolverDisabled || Number(agentBps) + Number(clientBps) !== 10000}>Resolve Split</Button></div>
+              <Button variant="success" onClick={() => transact("Resolve agent wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] })} disabled={resolverDisabled}>Resolve Agent Wins</Button>
+              <div><Input label="Slash Amount (USDC)" type="number" step="0.000001" min="0" value={slashAmount} onChange={(event) => setSlashAmount(event.target.value)} /><Button className="mt-3 w-full" variant="danger" onClick={() => transact("Resolve client wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(slashAmount || "0", 6)] })} disabled={resolverDisabled}>Resolve Client Wins</Button></div>
+              <div><div className="grid grid-cols-2 gap-3"><Input label="Agent BPS" type="number" value={agentBps} onChange={(event) => setAgentBps(event.target.value)} /><Input label="Client BPS" type="number" value={clientBps} onChange={(event) => setClientBps(event.target.value)} /></div><Button className="mt-3 w-full" variant="secondary" onClick={() => transact("Resolve split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })} disabled={resolverDisabled || Number(agentBps) + Number(clientBps) !== 10000}>Resolve Split</Button></div>
             </div>
           </Card>
         </Section>
@@ -278,7 +332,7 @@ export default function DisputeDetails() {
         <Section title="Submit Evidence">
           <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
             <Input label="Evidence URI" placeholder="ipfs://..." value={evidenceURI} onChange={(event) => setEvidenceURI(event.target.value)} />
-            <Button className="mt-4 w-full" onClick={() => transact("Submit evidence", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "submitEvidence", args: [BigInt(disputeId), evidenceURI] })} disabled={!walletReady || !participant || dispute.resolved || !evidenceURI || pending}>Submit Evidence</Button>
+            <Button className="mt-4 w-full" onClick={() => transact("Submit evidence", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "submitEvidence", args: [safeDisputeId!, evidenceURI] })} disabled={!walletReady || !participant || dispute.resolved || !evidenceURI || pending}>Submit Evidence</Button>
             {!participant && <div className="mt-3 text-[12px] leading-5 text-slate-500">Only a dispute participant can submit evidence.</div>}
           </Card>
         </Section>

@@ -1,8 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { isAddress } from "ethers";
-
-export const LOCAL_DEPLOYMENT_PATH = resolve("lib/contracts/deployments.local.json");
+import localDeployment from "./deployments.local.json";
 
 export type ArcPilotContractName =
   | "MockUSDC"
@@ -27,7 +24,7 @@ export function assertAddress(value: string, label: string): `0x${string}` {
 }
 
 export function readLocalDeployment(): LocalDeployment {
-  const parsed = JSON.parse(readFileSync(LOCAL_DEPLOYMENT_PATH, "utf8")) as LocalDeployment;
+  const parsed = JSON.parse(JSON.stringify(localDeployment)) as LocalDeployment;
   const names: ArcPilotContractName[] = [
     "MockUSDC",
     "AgentRegistry",

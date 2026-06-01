@@ -23,10 +23,13 @@ import { Input } from "../../../components/ui/Input";
 import { Section } from "../../../components/ui/Section";
 import { WalletFundsNotice } from "../../../components/wallet/WalletFundsNotice";
 import { withPublicMarketplaceStats } from "../../../lib/reputation/public-stats";
+import { toBigIntSafe } from "../../../lib/format/ids";
+import { logger } from "../../../lib/logger";
 
 export default function AgentDetails() {
   const params = useParams();
   const agentId = params?.agentId as string;
+  const safeAgentId = toBigIntSafe(agentId);
   const addresses = getBrowserContractAddresses();
   const publicClient = usePublicClient({ chainId: arcTestnet.id });
   const { tx, run, wallet } = useArcTransaction();
@@ -44,19 +47,43 @@ export default function AgentDetails() {
   const [metadataCopied, setMetadataCopied] = useState(false);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      if (!addresses || !publicClient) throw new Error("Arc Testnet contracts not configured.");
-      const [nextAgent, jobs] = await Promise.all([
-        readAgentView(publicClient, addresses, BigInt(agentId)),
-        readJobs(publicClient, addresses)
-      ]);
-      setAgent(withPublicMarketplaceStats(nextAgent, jobs));
+      if (!safeAgentId) throw new Error("Invalid agent ID.");
+      let indexedAgent: any = null;
+      try {
+        const response = await fetch(`/api/agents/${agentId}`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && data?.agent) indexedAgent = data.agent;
+      } catch (apiError) {
+        logger.warn("ui.agents.detail", "indexedRead:failed", { agentId, apiError }, "Indexed agent fallback is unavailable");
+      }
+      if (!addresses || !publicClient) {
+        if (indexedAgent) {
+          setAgent(indexedAgent);
+          return;
+        }
+        throw new Error("Arc Testnet contracts not configured.");
+      }
+      try {
+        const [nextAgent, jobs] = await Promise.all([
+          readAgentView(publicClient, addresses, safeAgentId),
+          readJobs(publicClient, addresses)
+        ]);
+        setAgent(withPublicMarketplaceStats(nextAgent, jobs));
+      } catch (onchainError) {
+        if (!indexedAgent) throw onchainError;
+        logger.warn("ui.agents.detail", "onchainRead:fallback", { agentId, onchainError }, "Using indexed agent after Arc Testnet read failed");
+        setAgent(indexedAgent);
+      }
     } catch (loadError) {
+      logger.warn("ui.agents.detail", "load:failed", { agentId, contractsConfigured: Boolean(addresses), loadError }, "Agent detail failed to load");
       setError(loadError instanceof Error ? loadError.message : "Failed to read Arc Testnet agent.");
     } finally {
       setLoading(false);
     }
-  }, [addresses, agentId, publicClient]);
+  }, [addresses, agentId, publicClient, safeAgentId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -78,7 +105,7 @@ export default function AgentDetails() {
     const amount = parseUnits(bondAmount, 6);
     const approved = await run("Approve USDC", { address: addresses!.USDC, abi: erc20Abi, functionName: "approve", args: [addresses!.TrustBondVault, amount] });
     if (!approved) return;
-    await transact("Deposit bond", { address: addresses!.TrustBondVault, abi: trustBondVaultAbi, functionName: "depositBond", args: [BigInt(agentId), amount] });
+    await transact("Deposit bond", { address: addresses!.TrustBondVault, abi: trustBondVaultAbi, functionName: "depositBond", args: [safeAgentId!, amount] });
   }
 
   async function copyMetadataURI() {
@@ -95,10 +122,10 @@ export default function AgentDetails() {
     try {
       const response = await fetch(`/api/agents/metadata?uri=${encodeURIComponent(agent.metadataURI)}`);
       const data = await response.json();
-      if (!response.ok || !data.ok) throw new Error(data.error || "Metadata record not found. Onchain URI is still available.");
+      if (!response.ok || !data.ok) throw new Error(data.error || "Metadata not indexed yet. Onchain URI is still available.");
       setMetadataRecord(data.metadata);
     } catch (readError) {
-      setMetadataError(readError instanceof Error ? readError.message : "Metadata record not found. Onchain URI is still available.");
+      setMetadataError(readError instanceof Error ? readError.message : "Metadata not indexed yet. Onchain URI is still available.");
     } finally {
       setMetadataLoading(false);
     }
@@ -179,9 +206,9 @@ export default function AgentDetails() {
               <Input label="Bond Amount (USDC)" type="number" step="0.000001" min="0" value={bondAmount} onChange={(event) => setBondAmount(event.target.value)} />
               <div className="grid grid-cols-2 gap-3">
                 <Button onClick={depositBond} disabled={!walletReady || !isOwner || !bondAmount || pending}>Approve And Deposit</Button>
-                <Button variant="secondary" onClick={() => transact("Request withdrawal", { address: addresses.TrustBondVault, abi: trustBondVaultAbi, functionName: "requestWithdraw", args: [BigInt(agentId), parseUnits(bondAmount || "0", 6)] })} disabled={!walletReady || !isOwner || !bondAmount || pending}>Request Withdrawal</Button>
-                <Button variant="secondary" onClick={() => transact("Execute withdrawal", { address: addresses.TrustBondVault, abi: trustBondVaultAbi, functionName: "executeWithdraw", args: [BigInt(agentId)] })} disabled={!walletReady || !isOwner || pending}>Execute Withdrawal</Button>
-                <Button variant="secondary" onClick={() => transact("Cancel withdrawal", { address: addresses.TrustBondVault, abi: trustBondVaultAbi, functionName: "cancelWithdraw", args: [BigInt(agentId)] })} disabled={!walletReady || !isOwner || pending}>Cancel Withdrawal</Button>
+                <Button variant="secondary" onClick={() => transact("Request withdrawal", { address: addresses.TrustBondVault, abi: trustBondVaultAbi, functionName: "requestWithdraw", args: [safeAgentId!, parseUnits(bondAmount || "0", 6)] })} disabled={!walletReady || !isOwner || !bondAmount || pending}>Request Withdrawal</Button>
+                <Button variant="secondary" onClick={() => transact("Execute withdrawal", { address: addresses.TrustBondVault, abi: trustBondVaultAbi, functionName: "executeWithdraw", args: [safeAgentId!] })} disabled={!walletReady || !isOwner || pending}>Execute Withdrawal</Button>
+                <Button variant="secondary" onClick={() => transact("Cancel withdrawal", { address: addresses.TrustBondVault, abi: trustBondVaultAbi, functionName: "cancelWithdraw", args: [safeAgentId!] })} disabled={!walletReady || !isOwner || pending}>Cancel Withdrawal</Button>
               </div>
               <div className="border-t border-borderDark pt-4">
                 <div className="mb-3 text-label">Spending Policy</div>
@@ -189,7 +216,7 @@ export default function AgentDetails() {
                   <Input label="Per Job (USDC)" type="number" step="0.000001" value={maxSpend} onChange={(event) => setMaxSpend(event.target.value)} />
                   <Input label="Daily Limit (USDC)" type="number" step="0.000001" value={dailySpend} onChange={(event) => setDailySpend(event.target.value)} />
                 </div>
-                <Button className="mt-3 w-full" variant="secondary" onClick={() => transact("Update spending policy", { address: addresses.SpendingPolicyManager, abi: spendingPolicyManagerAbi, functionName: "setPolicy", args: [BigInt(agentId), parseUnits(maxSpend || "0", 6), parseUnits(dailySpend || "0", 6), true, true, true, false] })} disabled={!walletReady || !isOwner || !maxSpend || !dailySpend || pending}>Update Spending Policy</Button>
+                <Button className="mt-3 w-full" variant="secondary" onClick={() => transact("Update spending policy", { address: addresses.SpendingPolicyManager, abi: spendingPolicyManagerAbi, functionName: "setPolicy", args: [safeAgentId!, parseUnits(maxSpend || "0", 6), parseUnits(dailySpend || "0", 6), true, true, true, false] })} disabled={!walletReady || !isOwner || !maxSpend || !dailySpend || pending}>Update Spending Policy</Button>
               </div>
             </div>
           </div>

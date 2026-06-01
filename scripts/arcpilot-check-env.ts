@@ -1,6 +1,8 @@
 import { getEnvStatus, printEnvStatus } from "../lib/config/env";
 import { logger } from "../lib/logger";
+import { loadEnvFiles } from "../lib/contracts/runtime";
 
+loadEnvFiles();
 logger.info("scripts.checkEnv", "start", {}, "Checking ArcPilot environment readiness");
 const rows = getEnvStatus();
 printEnvStatus(rows);

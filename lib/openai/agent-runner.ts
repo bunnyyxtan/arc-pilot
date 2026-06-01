@@ -1,9 +1,9 @@
 import OpenAI from "openai";
-import { loadEnvFiles } from "../contracts/runtime";
 import { logger } from "../logger";
 import { saveDeliverable } from "./deliverable";
 import { buildSystemPrompt, buildUserPrompt, isArcRelatedRequest, isUnclearJobRequest, type DeliverableType } from "./prompts";
 import { looksVagueDeliverable, sanitizeDeliverableFields } from "./sanitize";
+import { getOpenAIModelConfig } from "./model-config";
 
 type RawDeliverable = {
   generatedTitle?: unknown;
@@ -128,14 +128,13 @@ export async function runAgentJob(input: {
   deliverableHash: `0x${string}`;
   deliverableURI: string;
 }> {
-  loadEnvFiles();
   if (!process.env.OPENAI_API_KEY) {
-    logger.warn("openai.agentRunner", "env:missingApiKey", { model: process.env.OPENAI_MODEL || "gpt-4o-mini" }, "OpenAI API key is missing");
+    logger.warn("openai.agentRunner", "env:missingApiKey", { model: getOpenAIModelConfig().deliverableModel }, "OpenAI API key is missing");
     throw new Error("OPENAI_API_KEY is missing. Add it to .env.local or .env.");
   }
 
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = getOpenAIModelConfig().deliverableModel;
   logger.info("openai.agentRunner", "run:start", {
     model,
     deliverableType: input.deliverableType,

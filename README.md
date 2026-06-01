@@ -125,7 +125,9 @@ DISPUTE_ID=1 npm run arc:read-dispute
 
 ## Supabase Persistence
 
-Supabase is optional but becomes the primary server persistence layer when configured. Deliverables are saved to the `deliverables` table first, with local JSON in `data/deliverables/` kept as a fallback. Agent, job, and dispute list APIs read Supabase indexed tables first and fall back to the real onchain event indexer.
+Supabase is the required production persistence layer. Deliverables are saved to the `deliverables` table; local JSON fallback is available only during development. Agent, job, and dispute APIs prefer Supabase indexed records and use live Arc Testnet reads for freshness where available.
+
+Apply [lib/supabase/schema.sql](./lib/supabase/schema.sql) in the Supabase SQL editor before production deployment. The migration is additive: it preserves existing records, expands `indexed_agents` into the canonical agent table, and adds idempotent `app_events.source`, `payload`, and `event_key` fields.
 
 Required env:
 
@@ -156,7 +158,14 @@ Check and sync:
 ```bash
 npm run arc:supabase:check
 npm run arc:supabase:sync
+npm run arc:health:check
 ```
+
+The application also exposes production-safe diagnostics at `/engine/diagnostics`, `/api/health`, and `/api/health/supabase`. These routes report readiness and table counts only; they never expose secret values.
+
+`npm run arc:supabase:sync` also promotes existing development deliverable JSON into Supabase. Run it after applying the schema migration so previously generated reports remain available when production local-file fallback is disabled.
+
+For Vercel, configure the Arc Testnet contract addresses, `ARC_TESTNET_RPC_URL`, Supabase variables, `ARC_WALLET_SESSION_SECRET`, and `OPENAI_API_KEY` in the project environment. Use a wallet-session secret of at least 32 random characters. Do not rely on `data/deliverables/` in production because serverless filesystems are ephemeral.
 
 Never expose or log `SUPABASE_SERVICE_ROLE_KEY`; it is server-only.
 

@@ -2,8 +2,10 @@ import { execFileSync } from "node:child_process";
 import { getLocalRpcUrlFromEnv } from "../lib/config/env";
 import { assertResults, printResults, verifyLocalDeployment } from "../lib/contracts/verify";
 import { logger } from "../lib/logger";
+import { loadEnvFiles } from "../lib/contracts/runtime";
 
 async function main() {
+  loadEnvFiles();
   logger.info("scripts.deployLocal", "start", { platform: process.platform }, "Starting local deployment and verification");
   if (process.platform === "win32") {
     logger.info("scripts.deployLocal", "deploy:start", { command: "npx hardhat run scripts/deploy-local.ts --network localhost" }, "Running local deploy script");

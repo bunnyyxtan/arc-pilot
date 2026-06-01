@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { decodeJobURI } from "../../../../../lib/contracts/runtime";
+import { decodeJobURI } from "../../../../../lib/contracts/job-uri";
 import { logger } from "../../../../../lib/logger";
 import { hashFromDeliverableURI, readDeliverable } from "../../../../../lib/openai/deliverable";
 import { runAIDisputeReview } from "../../../../../lib/openai/dispute-resolver";
@@ -8,6 +8,7 @@ import { getDispute } from "../../../../../lib/sdk/disputes";
 import { getJobView } from "../../../../../lib/sdk/jobs";
 import { createServiceRoleSupabaseClient } from "../../../../../lib/supabase/server";
 import { toSupabaseJson } from "../../../../../lib/supabase/indexed-data";
+import { toBigIntSafe } from "../../../../../lib/format/ids";
 
 const CHAIN_ID = 5042002;
 
@@ -40,7 +41,9 @@ async function loadLatestReview(disputeId: string) {
 export async function GET(request: Request, context: { params: Promise<{ disputeId: string }> }) {
   try {
     const { disputeId } = await context.params;
-    const review = await loadLatestReview(disputeId);
+    const id = toBigIntSafe(disputeId);
+    if (!id) return NextResponse.json({ ok: false, error: "disputeId must be a positive numeric identifier." }, { status: 400 });
+    const review = await loadLatestReview(id.toString());
     if (!review && process.env.AUTO_RUN_AI_DISPUTE_REVIEW === "true") {
       logger.info("api.disputes.aiReview", "read:autoRun", { disputeId }, "No saved AI dispute review found; starting configured automatic review");
       return POST(new Request(request.url, {
@@ -58,18 +61,20 @@ export async function GET(request: Request, context: { params: Promise<{ dispute
 
 export async function POST(request: Request, context: { params: Promise<{ disputeId: string }> }) {
   const { disputeId } = await context.params;
-  logger.info("api.disputes.aiReview", "create:received", { disputeId }, "AI dispute review request received");
+  const id = toBigIntSafe(disputeId);
+  if (!id) return NextResponse.json({ ok: false, error: "disputeId must be a positive numeric identifier." }, { status: 400 });
+  logger.info("api.disputes.aiReview", "create:received", { disputeId: id }, "AI dispute review request received");
   try {
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const supabase = createServiceRoleSupabaseClient();
     if (body.forceRegenerate !== true) {
-      const existing = await loadLatestReview(disputeId);
+      const existing = await loadLatestReview(id.toString());
       if (existing) {
         return NextResponse.json({ ok: true, reused: true, review: existing, message: "Existing AI dispute review reused. Use Force Re-review to request a new judgment." });
       }
     }
 
-    const dispute = await getDispute(disputeId);
+    const dispute = await getDispute(id);
     const job = await getJobView(dispute.jobId);
     const agent = await getAgent(job.agentId);
     const decodedJob = decodeJobURI(job.jobURI);
@@ -125,7 +130,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
       }
     }) as Record<string, unknown>;
     const { model, review } = await runAIDisputeReview(aiContext);
-    const reviewURI = `arcpilot://ai-dispute-review/dispute-${disputeId}-${Date.now()}`;
+    const reviewURI = `arcpilot://ai-dispute-review/dispute-${id.toString()}-${Date.now()}`;
     const insertRow = {
       chain_id: CHAIN_ID,
       dispute_id: safeId(dispute.disputeId),
@@ -142,7 +147,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
       fairness_notes: review.fairnessNotes,
       risk_flags: review.riskFlags,
       reviewed_payload: toSupabaseJson({
-        disputeId,
+        disputeId: id,
         jobId: dispute.jobId,
         agentId: job.agentId,
         reasonURI: dispute.reasonURI,

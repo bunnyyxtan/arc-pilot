@@ -1,11 +1,9 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { loadEnvFiles } from "../contracts/runtime";
 import { logger } from "../logger";
 
 let serviceClient: SupabaseClient | null = null;
 
 function getServerConfig() {
-  loadEnvFiles();
   return {
     url: process.env.NEXT_PUBLIC_SUPABASE_URL,
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY

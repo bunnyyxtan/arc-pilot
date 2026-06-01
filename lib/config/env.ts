@@ -1,4 +1,3 @@
-import { loadEnvFiles } from "../contracts/runtime";
 import { NETWORKS } from "./networks";
 
 export const LOCAL_DEMO_ENV = [
@@ -18,7 +17,6 @@ export type EnvStatus = {
 };
 
 export function envValue(name: string, fallback?: string) {
-  loadEnvFiles();
   return process.env[name] || fallback;
 }
 
@@ -43,7 +41,6 @@ export function getArcTestnetUsdcAddressFromEnv() {
 }
 
 export function getEnvStatus(): EnvStatus[] {
-  loadEnvFiles();
   const rows: EnvStatus[] = [];
 
   for (const name of LOCAL_DEMO_ENV) {

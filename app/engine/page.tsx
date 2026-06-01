@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAccount, useChainId, usePublicClient } from "wagmi";
 import { ARC_TESTNET_EXPLORER_URL, ARC_TESTNET_RPC_URL, arcTestnet } from "../../lib/chains/arc-testnet";
 import { getBrowserContractAddresses, getMissingBrowserContracts } from "../../lib/contracts/browser-addresses";
 import { shortenAddress } from "../../lib/design/copy";
 import { Card } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
 import { Section } from "../../components/ui/Section";
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
@@ -31,10 +33,13 @@ export default function EngineStatus() {
 
   return (
     <div className="flex flex-col gap-10 animate-fadeInUp">
-      <div className="relative border-b border-borderDark/60 pb-8">
+      <div className="relative flex flex-col justify-between gap-5 border-b border-borderDark/60 pb-8 md:flex-row md:items-end">
         <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-info/30 to-transparent"></div>
-        <h1 className="lux-heading text-[36px] tracking-[-0.03em]">Arc Testnet Status</h1>
-        <p className="lux-copy mt-2 max-w-2xl text-[15px] text-slate-400">Inspect the configured public deployment, wallet network, and latest readable Arc Testnet block.</p>
+        <div>
+          <h1 className="lux-heading text-[36px] tracking-[-0.03em]">Arc Testnet Status</h1>
+          <p className="lux-copy mt-2 max-w-2xl text-[15px] text-slate-400">Inspect the configured public deployment, wallet network, and latest readable Arc Testnet block.</p>
+        </div>
+        <Link href="/engine/diagnostics"><Button variant="secondary">Open diagnostics</Button></Link>
       </div>
       <div className="grid gap-6 md:grid-cols-3">
         <Card className="border-borderDark/80 bg-black/20 p-6 shadow-depth-md"><div className="text-label">RPC Status</div><div className={`mt-3 font-heading text-[26px] ${rpcError ? "text-danger" : "text-success"}`}>{rpcError ? "Unavailable" : blockNumber === null ? "Checking..." : "Reachable"}</div></Card>
@@ -61,4 +66,3 @@ export default function EngineStatus() {
     </div>
   );
 }
-

@@ -1,5 +1,5 @@
 import { ZeroAddress } from "ethers";
-import { encodeJobURI } from "../contracts/runtime";
+import { encodeJobURI } from "../contracts/job-uri";
 import { loggedOperation } from "../logger";
 import { getSdkContracts, getSigner, type ArcPilotNetwork } from "./arcpilot";
 import { JOB_STATUS_LABELS, type JobView } from "./types";

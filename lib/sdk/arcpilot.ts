@@ -1,15 +1,9 @@
-import { existsSync } from "node:fs";
-import { Contract, JsonRpcProvider, Wallet, type ContractRunner } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, isAddress, type ContractRunner } from "ethers";
 import { NETWORKS, type NetworkKey } from "../config/networks";
 import { getArcTestnetRpcUrlFromEnv, getArcTestnetUsdcAddressFromEnv, getLocalRpcUrlFromEnv } from "../config/env";
 import { ABIS } from "../contracts/abis";
 import { readLocalDeployment } from "../contracts/addresses";
 import { logger, loggedOperation } from "../logger";
-import {
-  ARC_TESTNET_DEPLOYMENT_FILE,
-  loadArcTestnetDeploymentFromFileOrEnv,
-  type TestnetDeployment
-} from "../contracts/verify";
 
 // SDK core: resolves network/deployment context and returns ethers bindings used by API routes, scripts, and indexers.
 export type ArcPilotNetwork = NetworkKey;
@@ -48,10 +42,32 @@ export function loadSdkDeployment(network?: ArcPilotNetwork): NormalizedDeployme
   const resolved = resolveNetwork(network);
   logger.debug("sdk.core", "deployment:load", { network: resolved }, "Loading SDK deployment artifact");
   if (resolved === "arcTestnet") {
-    if (!existsSync(ARC_TESTNET_DEPLOYMENT_FILE)) {
-      return loadArcTestnetDeploymentFromFileOrEnv(getArcTestnetUsdcAddressFromEnv());
+    const required = {
+      AgentRegistry: process.env.NEXT_PUBLIC_AGENT_REGISTRY_ADDRESS,
+      ClientRegistry: process.env.NEXT_PUBLIC_CLIENT_REGISTRY_ADDRESS,
+      TrustBondVault: process.env.NEXT_PUBLIC_TRUST_BOND_VAULT_ADDRESS,
+      SpendingPolicyManager: process.env.NEXT_PUBLIC_SPENDING_POLICY_ADDRESS,
+      AgentJobEscrow: process.env.NEXT_PUBLIC_AGENT_JOB_ESCROW_ADDRESS,
+      DisputeManager: process.env.NEXT_PUBLIC_DISPUTE_MANAGER_ADDRESS
+    };
+    for (const [name, value] of Object.entries(required)) {
+      if (!value || !isAddress(value)) {
+        throw new Error(`${name} address missing. Configure NEXT_PUBLIC_* Arc Testnet contract addresses.`);
+      }
     }
-    return loadArcTestnetDeploymentFromFileOrEnv(getArcTestnetUsdcAddressFromEnv()) as TestnetDeployment;
+    return {
+      chainId: NETWORKS.arcTestnet.chainId,
+      network: NETWORKS.arcTestnet.name,
+      contracts: {
+        USDC: getArcTestnetUsdcAddressFromEnv(),
+        AgentRegistry: required.AgentRegistry as `0x${string}`,
+        ClientRegistry: required.ClientRegistry as `0x${string}`,
+        TrustBondVault: required.TrustBondVault as `0x${string}`,
+        SpendingPolicyManager: required.SpendingPolicyManager as `0x${string}`,
+        AgentJobEscrow: required.AgentJobEscrow as `0x${string}`,
+        DisputeManager: required.DisputeManager as `0x${string}`
+      }
+    };
   }
 
   const local = readLocalDeployment();

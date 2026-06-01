@@ -1,4 +1,4 @@
-import { decodeJobURI } from "../../../../../lib/contracts/runtime";
+import { decodeJobURI } from "../../../../../lib/contracts/job-uri";
 import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
 import { normalizeWallet } from "../../../../../lib/deliverables/access";
 import { logger } from "../../../../../lib/logger";

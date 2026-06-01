@@ -4,6 +4,7 @@ import { getAgent } from "../../../../../lib/sdk/agents";
 import { getDispute } from "../../../../../lib/sdk/disputes";
 import { getJobView } from "../../../../../lib/sdk/jobs";
 import { createServiceRoleSupabaseClient } from "../../../../../lib/supabase/server";
+import { toBigIntSafe } from "../../../../../lib/format/ids";
 
 const CHAIN_ID = 5042002;
 
@@ -19,11 +20,13 @@ function safeId(value: bigint) {
 export async function GET(_request: Request, context: { params: Promise<{ disputeId: string }> }) {
   try {
     const { disputeId } = await context.params;
+    const id = toBigIntSafe(disputeId);
+    if (!id) return NextResponse.json({ ok: false, error: "disputeId must be a positive numeric identifier." }, { status: 400 });
     const supabase = createServiceRoleSupabaseClient();
     const { data, error } = await supabase
       .from("manual_review_requests")
       .select("*")
-      .eq("dispute_id", disputeId)
+      .eq("dispute_id", id.toString())
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -37,7 +40,9 @@ export async function GET(_request: Request, context: { params: Promise<{ disput
 
 export async function POST(request: Request, context: { params: Promise<{ disputeId: string }> }) {
   const { disputeId } = await context.params;
-  logger.info("api.disputes.manualReview", "create:received", { disputeId }, "Manual review request received");
+  const id = toBigIntSafe(disputeId);
+  if (!id) return NextResponse.json({ ok: false, error: "disputeId must be a positive numeric identifier." }, { status: 400 });
+  logger.info("api.disputes.manualReview", "create:received", { disputeId: id }, "Manual review request received");
   try {
     const body = await request.json() as Record<string, unknown>;
     const reason = typeof body.reason === "string" ? body.reason.trim() : "";
@@ -49,7 +54,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
       return NextResponse.json({ ok: false, error: "Connect a valid participant wallet before requesting manual review." }, { status: 400 });
     }
 
-    const dispute = await getDispute(disputeId);
+    const dispute = await getDispute(id);
     const job = await getJobView(dispute.jobId);
     const agent = await getAgent(job.agentId);
     const participants = [dispute.openedBy, job.client, job.evaluator, agent.owner].map((wallet) => String(wallet).toLowerCase());

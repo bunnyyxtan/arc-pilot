@@ -7,7 +7,7 @@ import { deliverableURI, readDeliverableWithSource } from "../../../../lib/opena
 import { getAgent } from "../../../../lib/sdk/agents";
 import { getSdkContracts } from "../../../../lib/sdk/arcpilot";
 import { getJobView } from "../../../../lib/sdk/jobs";
-import { decodeJobURI } from "../../../../lib/contracts/runtime";
+import { decodeJobURI } from "../../../../lib/contracts/job-uri";
 
 async function isResolverWallet(viewer: string) {
   const wallet = normalizeWallet(viewer);
@@ -27,9 +27,18 @@ async function isResolverWallet(viewer: string) {
 
 export async function GET(request: Request, context: { params: Promise<{ hash: string }> }) {
   const { hash } = await context.params;
+  if (!/^0x[a-fA-F0-9]{64}$/.test(hash)) {
+    return NextResponse.json({ ok: false, error: "Invalid deliverable hash." }, { status: 400 });
+  }
   const viewer = getVerifiedWalletFromRequest(request) || "";
   logger.info("api.deliverables", "read:received", { hash, hasVerifiedWallet: Boolean(viewer) }, "Deliverable read request received");
-  const result = await readDeliverableWithSource(hash);
+  let result;
+  try {
+    result = await readDeliverableWithSource(hash);
+  } catch (error) {
+    logger.error("api.deliverables", "read:storageUnavailable", { hash, error }, "Deliverable storage read failed");
+    return NextResponse.json({ ok: false, error: "Deliverable storage is unavailable. Check Supabase production configuration." }, { status: 503 });
+  }
 
   if (!result) {
     logger.warn("api.deliverables", "read:notFound", { hash }, "Deliverable was not found");

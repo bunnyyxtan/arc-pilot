@@ -1,6 +1,6 @@
 import OpenAI from "openai";
-import { loadEnvFiles } from "../contracts/runtime";
 import { logger } from "../logger";
+import { getOpenAIModelConfig } from "./model-config";
 
 export type DisputeResolutionOutcome = "agent_wins" | "client_wins" | "split" | "manual_review_required";
 
@@ -110,11 +110,10 @@ function systemPrompt() {
 }
 
 export async function runAIDisputeReview(context: Record<string, unknown>) {
-  loadEnvFiles();
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is missing. Add it to .env.local or .env.");
   }
-  const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const model = getOpenAIModelConfig().disputeModel;
   logger.info("openai.disputeResolver", "review:start", { model }, "AI dispute review starting");
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const completion = await client.chat.completions.create({

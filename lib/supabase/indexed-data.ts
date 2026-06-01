@@ -1,6 +1,7 @@
 import { logger } from "../logger";
 import { getOptionalServiceRoleSupabaseClient } from "./server";
 import type { AppEventRow, IndexedAgentRow, IndexedDisputeRow, IndexedJobRow, Json } from "./types";
+import { formatAgentDisplayId } from "../design/agent-id";
 
 type IndexedWriteResult = {
   ok: boolean;
@@ -70,7 +71,7 @@ async function safeUpsert(
   const removedColumns: string[] = [];
   let replaceMode = false;
 
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
     try {
       let error: unknown;
       if (replaceMode) {
@@ -121,13 +122,39 @@ async function safeUpsert(
 }
 
 export async function upsertIndexedAgent(agent: Record<string, unknown>): Promise<IndexedWriteResult> {
+  const stats = agent.stats && typeof agent.stats === "object" ? agent.stats as Record<string, unknown> : {};
+  const owner = typeof agent.owner === "string" ? agent.owner.toLowerCase() : null;
+  const raw = toSupabaseJson(agent);
   const row: IndexedAgentRow = {
+    chain_id: agent.chainId !== undefined ? Number(agent.chainId) : agent.chain_id !== undefined ? Number(agent.chain_id) : 5042002,
     agent_id: String(agent.agentId ?? agent.agent_id ?? ""),
-    owner: typeof agent.owner === "string" ? agent.owner : null,
+    display_id: formatAgentDisplayId(
+      typeof agent.name === "string" ? agent.name : undefined,
+      typeof agent.agentId === "string" || typeof agent.agentId === "number" || typeof agent.agentId === "bigint"
+        ? agent.agentId
+        : typeof agent.agent_id === "string" || typeof agent.agent_id === "number" || typeof agent.agent_id === "bigint"
+          ? agent.agent_id
+          : undefined
+    ),
+    owner_wallet: owner,
+    owner,
     name: typeof agent.name === "string" ? agent.name : null,
     category: typeof agent.category === "string" ? agent.category : null,
+    skills: toSupabaseJson(agent.skills ?? []),
+    metadata_uri: typeof agent.metadataURI === "string" ? agent.metadataURI : typeof agent.metadata_uri === "string" ? agent.metadata_uri : null,
+    operating_wallet: typeof agent.operatingWallet === "string" ? agent.operatingWallet.toLowerCase() : null,
+    reserve_wallet: typeof agent.reserveWallet === "string" ? agent.reserveWallet.toLowerCase() : null,
     active: typeof agent.active === "boolean" ? agent.active : null,
-    payload: toSupabaseJson(agent),
+    access_mode: typeof agent.accessMode === "string" ? agent.accessMode : "public",
+    trust_bond: agent.trustBond !== undefined ? String(agent.trustBond) : null,
+    lifetime_earned: stats.lifetimeEarned !== undefined ? String(stats.lifetimeEarned) : null,
+    completed_jobs: stats.completedJobs !== undefined ? String(stats.completedJobs) : null,
+    disputed_jobs: stats.disputedJobs !== undefined ? String(stats.disputedJobs) : null,
+    avg_score: agent.reputationScore !== undefined ? String(agent.reputationScore) : null,
+    reputation_score: agent.reputationScore !== undefined ? String(agent.reputationScore) : null,
+    created_at_onchain: agent.createdAt !== undefined ? String(agent.createdAt) : null,
+    payload: raw,
+    raw,
     updated_at: new Date().toISOString()
   };
   return safeUpsert("agent:upsert", "indexed_agents", row as unknown as Record<string, unknown>, "agent_id");
@@ -247,17 +274,21 @@ export async function upsertIndexedDispute(dispute: Record<string, unknown>): Pr
   return safeUpsert("dispute:upsert", "indexed_disputes", row as unknown as Record<string, unknown>, "dispute_id");
 }
 
-export async function insertAppEvent(event: Pick<AppEventRow, "event_type" | "source" | "payload">): Promise<IndexedWriteResult> {
+export async function insertAppEvent(event: Pick<AppEventRow, "event_type" | "source" | "payload"> & { event_key?: string | null }): Promise<IndexedWriteResult> {
   const supabase = getOptionalServiceRoleSupabaseClient();
   if (!supabase) return { ok: false, reason: "Supabase is not configured." };
   const row: AppEventRow = {
     ...event,
     created_at: new Date().toISOString()
   };
-  return safeWrite("event:insert", async () => {
-    let result = await supabase.from("app_events").insert(row);
+  let legacyFallback = false;
+  const result = await safeWrite("event:insert", async () => {
+    let result = row.event_key
+      ? await supabase.from("app_events").upsert(row, { onConflict: "event_key" })
+      : await supabase.from("app_events").insert(row);
     const message = result.error?.message ?? "";
-    if (message.includes("payload") || message.includes("source")) {
+    if (result.error && (row.event_key || message.includes("payload") || message.includes("source") || message.includes("event_key"))) {
+      legacyFallback = true;
       result = await supabase.from("app_events").insert({
         event_type: row.event_type,
         created_at: row.created_at
@@ -265,6 +296,43 @@ export async function insertAppEvent(event: Pick<AppEventRow, "event_type" | "so
     }
     return result;
   });
+  return result.ok && legacyFallback
+    ? { ok: true, reason: "Used legacy app_events insert. Apply lib/supabase/schema.sql for source, payload, and idempotent event_key support." }
+    : result;
+}
+
+function indexedAgentPayload<T>(row: IndexedAgentRow | null): T | null {
+  if (!row) return null;
+  if (row.payload && typeof row.payload === "object") return row.payload as T;
+  return {
+    agentId: row.agent_id,
+    owner: row.owner_wallet ?? row.owner,
+    name: row.name,
+    category: row.category,
+    metadataURI: row.metadata_uri,
+    operatingWallet: row.operating_wallet,
+    reserveWallet: row.reserve_wallet,
+    active: row.active,
+    createdAt: row.created_at_onchain,
+    trustBond: row.trust_bond,
+    reputationScore: row.reputation_score ?? row.avg_score,
+    stats: {
+      lifetimeEarned: row.lifetime_earned,
+      completedJobs: row.completed_jobs,
+      disputedJobs: row.disputed_jobs
+    }
+  } as T;
+}
+
+export async function getIndexedAgent<T = unknown>(agentId: string | number | bigint) {
+  const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("indexed_agents").select("*").eq("agent_id", String(agentId)).maybeSingle();
+  if (error) {
+    logger.warn("supabase.indexedData", "agent:readFailed", { error, agentId: String(agentId) }, "Supabase indexed agent read failed");
+    return null;
+  }
+  return indexedAgentPayload<T>(data as IndexedAgentRow | null);
 }
 
 export async function getIndexedAgents<T = unknown>() {
@@ -275,7 +343,7 @@ export async function getIndexedAgents<T = unknown>() {
     logger.warn("supabase.indexedData", "agents:readFailed", { error }, "Supabase indexed agents read failed");
     return [];
   }
-  return (data ?? []).map((row) => payloadFromRow<T>(row)).filter(Boolean) as T[];
+  return (data ?? []).map((row) => indexedAgentPayload<T>(row as IndexedAgentRow)).filter(Boolean) as T[];
 }
 
 export async function getIndexedJobs<T = unknown>() {
@@ -289,6 +357,17 @@ export async function getIndexedJobs<T = unknown>() {
   return (data ?? []).map((row) => payloadFromRow<T>(row)).filter(Boolean) as T[];
 }
 
+export async function getIndexedJob<T = unknown>(jobId: string | number | bigint) {
+  const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("indexed_jobs").select("*").eq("job_id", String(jobId)).maybeSingle();
+  if (error) {
+    logger.warn("supabase.indexedData", "job:readFailed", { error, jobId: String(jobId) }, "Supabase indexed job read failed");
+    return null;
+  }
+  return payloadFromRow<T>(data);
+}
+
 export async function getIndexedDisputes<T = unknown>() {
   const supabase = getOptionalServiceRoleSupabaseClient();
   if (!supabase) return [];
@@ -298,6 +377,17 @@ export async function getIndexedDisputes<T = unknown>() {
     return [];
   }
   return (data ?? []).map((row) => payloadFromRow<T>(row)).filter(Boolean) as T[];
+}
+
+export async function getIndexedDispute<T = unknown>(disputeId: string | number | bigint) {
+  const supabase = getOptionalServiceRoleSupabaseClient();
+  if (!supabase) return null;
+  const { data, error } = await supabase.from("indexed_disputes").select("*").eq("dispute_id", String(disputeId)).maybeSingle();
+  if (error) {
+    logger.warn("supabase.indexedData", "dispute:readFailed", { error, disputeId: String(disputeId) }, "Supabase indexed dispute read failed");
+    return null;
+  }
+  return payloadFromRow<T>(data);
 }
 
 export async function getAppEvents() {

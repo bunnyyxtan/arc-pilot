@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Contract, JsonRpcProvider, Wallet, type ContractRunner } from "ethers";
 import { ABIS } from "./abis";
 import { readLocalDeployment } from "./addresses";
+export { decodeJobURI, encodeJobURI } from "./job-uri";
 
 export function loadEnvFiles() {
   for (const filename of [".env.local", ".env"]) {
@@ -79,38 +80,6 @@ export function getContracts(runner?: ContractRunner) {
     AgentJobEscrow: new Contract(contracts.AgentJobEscrow, ABIS.AgentJobEscrow, contractRunner),
     DisputeManager: new Contract(contracts.DisputeManager, ABIS.DisputeManager, contractRunner)
   };
-}
-
-export function encodeJobURI(input: { title: string; description: string; deliverableVisibility?: "public" | "restricted"; jobMode?: "marketplace" | "self_use" }) {
-  const encoded = Buffer.from(JSON.stringify(input), "utf8").toString("base64url");
-  return `arcpilot-job://${encoded}`;
-}
-
-export function decodeJobURI(jobURI: string): { title: string; description: string; deliverableVisibility?: "public" | "restricted"; jobMode?: "marketplace" | "self_use" } | null {
-  if (!jobURI.startsWith("arcpilot-job://")) {
-    return null;
-  }
-
-  try {
-    const encoded = jobURI.slice("arcpilot-job://".length);
-    const parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
-      title?: unknown;
-      description?: unknown;
-      deliverableVisibility?: unknown;
-      jobMode?: unknown;
-    };
-    if (typeof parsed.title !== "string" || typeof parsed.description !== "string") {
-      return null;
-    }
-    return {
-      title: parsed.title,
-      description: parsed.description,
-      deliverableVisibility: parsed.deliverableVisibility === "public" ? "public" : parsed.deliverableVisibility === "restricted" ? "restricted" : undefined,
-      jobMode: parsed.jobMode === "self_use" ? "self_use" : parsed.jobMode === "marketplace" ? "marketplace" : undefined
-    };
-  } catch {
-    return null;
-  }
 }
 
 export async function waitForTx(tx: { wait: () => Promise<unknown> }) {

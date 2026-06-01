@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { logger } from "../../lib/logger";
 import { bigintJson } from "../../lib/sdk/types";
+import { toBigIntSafe } from "../../lib/format/ids";
+
+class RouteValidationError extends Error {}
 
 // Shared API helpers keep response shapes stable while attaching safe debug context.
 export function ok(data: unknown) {
@@ -12,10 +15,11 @@ export function ok(data: unknown) {
 }
 
 export function fail(error: unknown, status = 400, module = "api", action = "request") {
-  logger.error(module, `${action}:failed`, { status, error }, "API request failed");
+  const responseStatus = error instanceof RouteValidationError ? 400 : status;
+  logger.error(module, `${action}:failed`, { status: responseStatus, error }, "API request failed");
   return NextResponse.json(
     { ok: false, error: error instanceof Error ? error.message : String(error) },
-    { status }
+    { status: responseStatus }
   );
 }
 
@@ -38,8 +42,7 @@ export function bodyPrivateKey(body: Record<string, unknown>, envName?: string) 
 }
 
 export function routeBigInt(value: string | undefined, label: string) {
-  if (!value) {
-    throw new Error(`${label} is required.`);
-  }
-  return BigInt(value);
+  const id = toBigIntSafe(value);
+  if (id === null) throw new RouteValidationError(`${label} must be a positive numeric identifier.`);
+  return id;
 }

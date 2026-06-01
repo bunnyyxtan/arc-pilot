@@ -24,6 +24,8 @@ import { Section } from "../../../components/ui/Section";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { WalletFundsNotice } from "../../../components/wallet/WalletFundsNotice";
 import type { DeliverableType } from "../../../lib/openai/prompts";
+import { toBigIntSafe } from "../../../lib/format/ids";
+import { logger } from "../../../lib/logger";
 
 function detectDeliverableType(title: string, description: string): DeliverableType {
   const combined = `${title} ${description}`.toLowerCase();
@@ -56,6 +58,7 @@ export default function JobDetails() {
   const params = useParams();
   const router = useRouter();
   const jobId = params?.jobId as string;
+  const safeJobId = toBigIntSafe(jobId);
   const addresses = getBrowserContractAddresses();
   const publicClient = usePublicClient({ chainId: arcTestnet.id });
   const { tx, run, wallet } = useArcTransaction();
@@ -79,10 +82,44 @@ export default function JobDetails() {
   const [compactDeliverable, setCompactDeliverable] = useState<CompactDeliverable | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
-      if (!addresses || !publicClient) throw new Error("Arc Testnet contracts not configured.");
-      const nextJob = await readJobView(publicClient, addresses, BigInt(jobId));
-      const nextAgent = await readAgentView(publicClient, addresses, nextJob.agentId);
+      if (!safeJobId) throw new Error("Invalid job ID.");
+      let nextJob: any = null;
+      try {
+        const response = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && data?.job) nextJob = data.job;
+      } catch (apiError) {
+        logger.warn("ui.jobs.detail", "indexedRead:failed", { jobId, apiError }, "Indexed job fallback is unavailable");
+      }
+      if (addresses && publicClient) {
+        try {
+          nextJob = await readJobView(publicClient, addresses, safeJobId);
+        } catch (onchainError) {
+          if (!nextJob) throw onchainError;
+          logger.warn("ui.jobs.detail", "onchainRead:fallback", { jobId, onchainError }, "Using indexed job after Arc Testnet read failed");
+        }
+      }
+      if (!nextJob) throw new Error(addresses ? "Arc Testnet job not found." : "Arc Testnet contracts not configured.");
+      let nextAgent: any = null;
+      try {
+        const response = await fetch(`/api/agents/${String(nextJob.agentId)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && data?.agent) nextAgent = data.agent;
+      } catch (apiError) {
+        logger.warn("ui.jobs.detail", "agentIndexedRead:failed", { jobId, agentId: String(nextJob.agentId), apiError }, "Indexed agent fallback is unavailable");
+      }
+      if (addresses && publicClient) {
+        try {
+          nextAgent = await readAgentView(publicClient, addresses, BigInt(nextJob.agentId));
+        } catch (onchainError) {
+          if (!nextAgent) throw onchainError;
+          logger.warn("ui.jobs.detail", "agentOnchainRead:fallback", { jobId, agentId: String(nextJob.agentId), onchainError }, "Using indexed agent after Arc Testnet read failed");
+        }
+      }
+      if (!nextAgent) throw new Error("Assigned agent owner could not be loaded.");
       setJob(nextJob);
       setAgent(nextAgent);
       setDeliverableURI(nextJob.deliverableURI || "");
@@ -103,11 +140,12 @@ export default function JobDetails() {
         // The live contract remains the source of truth if the cache lookup is unavailable.
       }
     } catch (loadError) {
+      logger.warn("ui.jobs.detail", "load:failed", { jobId, contractsConfigured: Boolean(addresses), loadError }, "Job detail failed to load");
       setError(loadError instanceof Error ? loadError.message : "Failed to read Arc Testnet job.");
     } finally {
       setLoading(false);
     }
-  }, [addresses, jobId, publicClient]);
+  }, [addresses, jobId, publicClient, safeJobId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -239,7 +277,7 @@ export default function JobDetails() {
     const amount = BigInt(job.amount) + BigInt(job.clientBond);
     const approved = await run("Approve USDC", { address: addresses!.USDC, abi: erc20Abi, functionName: "approve", args: [addresses!.AgentJobEscrow, amount] });
     if (!approved) return;
-    await transact("Fund escrow", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "fundJob", args: [BigInt(jobId)] });
+    await transact("Fund escrow", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "fundJob", args: [safeJobId!] });
   }
 
   async function handleConfirmDispute() {
@@ -271,7 +309,7 @@ export default function JobDetails() {
         address: addresses!.AgentJobEscrow, 
         abi: agentJobEscrowAbi, 
         functionName: "rejectToDispute", 
-        args: [BigInt(jobId), data.reasonURI] 
+        args: [safeJobId!, data.reasonURI] 
       });
       
       if (hash) {
@@ -463,12 +501,12 @@ export default function JobDetails() {
                       </Button>
                     )}
                     {jobStatus === 2 && isAgentOwner && (
-                      <Button onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [BigInt(jobId), deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>
+                      <Button onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [safeJobId!, deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>
                         Submit Deliverable
                       </Button>
                     )}
                     {jobStatus === 3 && isReviewer && (
-                      <Button variant="success" onClick={() => transact("Approve and release", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [BigInt(jobId)] })} disabled={Boolean(approveReason)} title={approveReason || undefined}>
+                      <Button variant="success" onClick={() => transact("Approve and release", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] })} disabled={Boolean(approveReason)} title={approveReason || undefined}>
                         Approve And Release
                       </Button>
                     )}
@@ -504,7 +542,7 @@ export default function JobDetails() {
                         </Button>
                       )}
                       <Button variant="secondary" onClick={() => runGptAgent(false)} disabled={Boolean(runGptReason)} title={runGptReason || undefined}>{gptLoading ? "Running AI Agent..." : "Run AI Agent"}</Button>
-                      <Button onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [BigInt(jobId), deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>Submit Deliverable</Button>
+                      <Button onClick={() => transact("Submit deliverable", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "submitDeliverable", args: [safeJobId!, deliverableURI] })} disabled={Boolean(submitReason)} title={submitReason || undefined}>Submit Deliverable</Button>
                     </div>
                     {(runGptReason || submitReason) && <div className="mt-3 text-[12px] leading-5 text-slate-500">{runGptReason ? `Run AI Agent: ${runGptReason}. ` : ""}{submitReason ? `Submit: ${submitReason}.` : ""}</div>}
                     {walletSession.error && <div className="mt-3 text-[12px] leading-5 text-danger">{walletSession.error}</div>}
@@ -541,7 +579,7 @@ export default function JobDetails() {
                     Review the protected deliverable preview, then approve the completed work or open a dispute with a clear rejection reason.
                   </div>
                   <div className="mt-5 flex flex-wrap gap-3">
-                    <Button variant="success" onClick={() => transact("Approve and release", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [BigInt(jobId)] })} disabled={Boolean(approveReason)} title={approveReason || undefined}>Approve And Release</Button>
+                    <Button variant="success" onClick={() => transact("Approve and release", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] })} disabled={Boolean(approveReason)} title={approveReason || undefined}>Approve And Release</Button>
                     <Button variant="danger" onClick={() => { setDisputeApiError(null); setShowDisputeModal(true); }} disabled={Boolean(openDisputeReason)} title={openDisputeReason || undefined}>Reject To Dispute</Button>
                   </div>
                   {approveReason && <div className="mt-3 text-[12px] leading-5 text-slate-500">Review actions: {approveReason}.</div>}
@@ -579,7 +617,7 @@ export default function JobDetails() {
               )}
               {jobStatus === 1 && isAgentOwner && (
                 <>
-                  <Button className="w-full" variant="secondary" onClick={() => transact("Start work", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "markRunning", args: [BigInt(jobId)] })} disabled={Boolean(markRunningReason)} title={markRunningReason || undefined}>Start Work</Button>
+                  <Button className="w-full" variant="secondary" onClick={() => transact("Start work", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "markRunning", args: [safeJobId!] })} disabled={Boolean(markRunningReason)} title={markRunningReason || undefined}>Start Work</Button>
                   {markRunningReason && <div className="text-[12px] leading-5 text-slate-500">Start Work: {markRunningReason}.</div>}
                 </>
               )}
@@ -591,7 +629,7 @@ export default function JobDetails() {
               )}
               {[0, 1, 2].includes(jobStatus) && (
                 <>
-                  <Button className="w-full" variant="secondary" onClick={() => transact("Expire and refund", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "expireAndRefund", args: [BigInt(jobId)] })} disabled={Boolean(expireReason)} title={expireReason || undefined}>Expire / Refund</Button>
+                  <Button className="w-full" variant="secondary" onClick={() => transact("Expire and refund", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "expireAndRefund", args: [safeJobId!] })} disabled={Boolean(expireReason)} title={expireReason || undefined}>Expire / Refund</Button>
                   {expireReason && <div className="text-[12px] leading-5 text-slate-500">Expire: {expireReason}.</div>}
                 </>
               )}

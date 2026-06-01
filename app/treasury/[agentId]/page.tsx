@@ -20,10 +20,13 @@ import { SpendingPolicyVisual } from "../../../components/policies/SpendingPolic
 import { Input } from "../../../components/ui/Input";
 import { TxStatus } from "../../../components/shared/TxStatus";
 import Link from "next/link";
+import { toBigIntSafe } from "../../../lib/format/ids";
+import { logger } from "../../../lib/logger";
 
 export default function AgentTreasury() {
   const params = useParams();
   const agentId = params?.agentId as string;
+  const safeAgentId = toBigIntSafe(agentId);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,19 +39,46 @@ export default function AgentTreasury() {
   const { tx, run, wallet } = useArcTransaction();
 
   const fetchTreasury = useCallback(async () => {
+      setLoading(true);
+      setError(null);
       try {
-        if (!publicClient || !addresses) throw new Error("Arc Testnet contracts not configured.");
-        const payload = await readAgentView(publicClient, addresses, BigInt(agentId));
+        if (!safeAgentId) throw new Error("Invalid agent ID.");
+        let indexedAgent: any = null;
+        try {
+          const response = await fetch(`/api/agents/${agentId}`, { cache: "no-store" });
+          const body = await response.json();
+          if (response.ok && body?.agent) indexedAgent = body.agent;
+        } catch (apiError) {
+          logger.warn("ui.treasury.detail", "indexedRead:failed", { agentId, apiError }, "Indexed treasury fallback is unavailable");
+        }
+        if (!publicClient || !addresses) {
+          if (indexedAgent) {
+            setData(indexedAgent);
+            return;
+          }
+          throw new Error("Arc Testnet contracts not configured.");
+        }
+        let payload;
+        try {
+          payload = await readAgentView(publicClient, addresses, safeAgentId);
+        } catch (onchainError) {
+          if (!indexedAgent) throw onchainError;
+          logger.warn("ui.treasury.detail", "onchainRead:fallback", { agentId, onchainError }, "Using indexed treasury after Arc Testnet read failed");
+          payload = indexedAgent;
+        }
         setData(payload);
-        setOperatingBps(String(payload.treasuryPolicy.operatingBps));
-        setReserveBps(String(payload.treasuryPolicy.reserveBps));
-        setBondBps(String(payload.treasuryPolicy.bondBps));
+        if (payload.treasuryPolicy) {
+          setOperatingBps(String(payload.treasuryPolicy.operatingBps));
+          setReserveBps(String(payload.treasuryPolicy.reserveBps));
+          setBondBps(String(payload.treasuryPolicy.bondBps));
+        }
       } catch (err: any) {
-        setError(err.message);
+        logger.warn("ui.treasury.detail", "load:failed", { agentId, contractsConfigured: Boolean(addresses), err }, "Treasury detail failed to load");
+        setError(err instanceof Error ? err.message : "Failed to load agent treasury.");
       } finally {
         setLoading(false);
       }
-  }, [addresses, agentId, publicClient]);
+  }, [addresses, agentId, publicClient, safeAgentId]);
 
   useEffect(() => {
     if (agentId) fetchTreasury();
@@ -66,7 +96,7 @@ export default function AgentTreasury() {
   }, [data]);
 
   if (loading) return <div className="py-24 text-center text-[13px] leading-6 text-slate-500 animate-pulse">Loading Agent Treasury...</div>;
-  if (error || !data) return <SetupRequired message="Agent not found or indexer is down." />;
+  if (error || !data) return <SetupRequired message={error || "Agent not found or indexer is unavailable."} />;
   const displayId = formatAgentDisplayId(data.name, data.agentId);
   const isOwner = wallet.address?.toLowerCase() === String(data.owner).toLowerCase();
   const pending = tx.phase === "pending" || tx.phase === "confirming";
@@ -257,7 +287,7 @@ export default function AgentTreasury() {
             </div>
             <Button className="mt-4 w-full" variant="secondary" disabled={!wallet.isConnected || !wallet.correctNetwork || !isOwner || pending || Number(operatingBps) + Number(reserveBps) + Number(bondBps) !== 10000} onClick={async () => {
               if (!addresses) return;
-              const hash = await run("Update treasury policy", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "setTreasuryPolicy", args: [BigInt(agentId), BigInt(operatingBps), BigInt(reserveBps), BigInt(bondBps)] });
+              const hash = await run("Update treasury policy", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "setTreasuryPolicy", args: [safeAgentId!, BigInt(operatingBps), BigInt(reserveBps), BigInt(bondBps)] });
               if (hash) await fetchTreasury();
             }}>Update Policy</Button>
           </div>
