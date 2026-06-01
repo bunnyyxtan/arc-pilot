@@ -8,6 +8,8 @@ type IndexedWriteResult = {
   reason?: string;
 };
 
+let modernAppEventsSchema: boolean | null = null;
+
 function reasonFromError(error: unknown) {
   if (!error) return "unknown";
   if (error instanceof Error) return error.message;
@@ -153,7 +155,6 @@ export async function upsertIndexedAgent(agent: Record<string, unknown>): Promis
     avg_score: agent.reputationScore !== undefined ? String(agent.reputationScore) : null,
     reputation_score: agent.reputationScore !== undefined ? String(agent.reputationScore) : null,
     created_at_onchain: agent.createdAt !== undefined ? String(agent.createdAt) : null,
-    payload: raw,
     raw,
     updated_at: new Date().toISOString()
   };
@@ -283,18 +284,33 @@ export async function insertAppEvent(event: Pick<AppEventRow, "event_type" | "so
   };
   let legacyFallback = false;
   const result = await safeWrite("event:insert", async () => {
-    let result = row.event_key
-      ? await supabase.from("app_events").upsert(row, { onConflict: "event_key" })
-      : await supabase.from("app_events").insert(row);
-    const message = result.error?.message ?? "";
-    if (result.error && (row.event_key || message.includes("payload") || message.includes("source") || message.includes("event_key"))) {
+    if (modernAppEventsSchema === null) {
+      const { error } = await supabase.from("app_events").select("id,event_type,source,payload,event_key,created_at").limit(1);
+      modernAppEventsSchema = !error;
+    }
+
+    if (!modernAppEventsSchema) {
       legacyFallback = true;
-      result = await supabase.from("app_events").insert({
+      return supabase.from("app_events").insert({
         event_type: row.event_type,
         created_at: row.created_at
       });
     }
-    return result;
+
+    if (!row.event_key) {
+      return supabase.from("app_events").insert(row);
+    }
+
+    const { data, error } = await supabase
+      .from("app_events")
+      .select("id")
+      .eq("event_key", row.event_key)
+      .limit(1);
+    if (error) return { error };
+    const existingId = data?.[0]?.id;
+    return existingId
+      ? supabase.from("app_events").update(row).eq("id", existingId)
+      : supabase.from("app_events").insert(row);
   });
   return result.ok && legacyFallback
     ? { ok: true, reason: "Used legacy app_events insert. Apply lib/supabase/schema.sql for source, payload, and idempotent event_key support." }
@@ -303,6 +319,7 @@ export async function insertAppEvent(event: Pick<AppEventRow, "event_type" | "so
 
 function indexedAgentPayload<T>(row: IndexedAgentRow | null): T | null {
   if (!row) return null;
+  if (row.raw && typeof row.raw === "object") return row.raw as T;
   if (row.payload && typeof row.payload === "object") return row.payload as T;
   return {
     agentId: row.agent_id,

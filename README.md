@@ -161,6 +161,14 @@ npm run arc:supabase:sync
 npm run arc:health:check
 ```
 
+`indexed_disputes` stores live onchain dispute fields. There is no persisted `status` column: dispute status is derived from `resolved`, `outcome`, and review enrichment. Use this debug query:
+
+```sql
+select dispute_id, job_id, opened_by, outcome, resolved, updated_at
+from indexed_disputes
+order by dispute_id;
+```
+
 The application also exposes production-safe diagnostics at `/engine/diagnostics`, `/api/health`, and `/api/health/supabase`. These routes report readiness and table counts only; they never expose secret values.
 
 `npm run arc:supabase:sync` also promotes existing development deliverable JSON into Supabase. Run it after applying the schema migration so previously generated reports remain available when production local-file fallback is disabled.

@@ -3,7 +3,7 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type DeliverableRow = {
   deliverable_hash: string;
   deliverable_uri: string;
-  chain_id: number | null;
+  chain_id: number;
   job_id: string | null;
   agent_id: string | null;
   agent_name: string;
@@ -60,7 +60,7 @@ export type IndexedAgentRow = {
   avg_score?: string | null;
   reputation_score?: string | null;
   created_at_onchain?: string | null;
-  payload: Json;
+  payload?: Json;
   raw?: Json;
   updated_at?: string;
 };

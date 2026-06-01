@@ -1,4 +1,5 @@
 import { loadEnvFiles } from "../lib/contracts/runtime";
+import { insertAppEvent } from "../lib/supabase/indexed-data";
 import { createServiceRoleSupabaseClient } from "../lib/supabase/server";
 
 const required = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
@@ -32,12 +33,30 @@ async function main() {
 
   const { error: indexedAgentColumnsError } = await supabase
     .from("indexed_agents")
-    .select("chain_id,agent_id,display_id,owner_wallet,name,category,metadata_uri,trust_bond,lifetime_earned,completed_jobs,reputation_score,raw")
+    .select("chain_id,agent_id,display_id,owner_wallet,owner,name,category,skills,metadata_uri,operating_wallet,reserve_wallet,active,access_mode,trust_bond,lifetime_earned,completed_jobs,disputed_jobs,avg_score,reputation_score,created_at_onchain,raw,updated_at")
     .limit(1);
   if (indexedAgentColumnsError) {
     throw new Error(`Supabase indexed_agents migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${indexedAgentColumnsError.message}`);
   }
-  console.log("ok indexed_agents canonical columns");
+  console.log("ok indexed_agents raw canonical columns");
+
+  const { error: indexedJobColumnsError } = await supabase
+    .from("indexed_jobs")
+    .select("chain_id,job_id,agent_id,client,status,status_label,deliverable_uri,deliverable_hash,visibility,payload,updated_at")
+    .limit(1);
+  if (indexedJobColumnsError) {
+    throw new Error(`Supabase indexed_jobs migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${indexedJobColumnsError.message}`);
+  }
+  console.log("ok indexed_jobs sync columns");
+
+  const { error: indexedDisputeColumnsError } = await supabase
+    .from("indexed_disputes")
+    .select("dispute_id,job_id,opened_by,outcome,resolved,payload,updated_at")
+    .limit(1);
+  if (indexedDisputeColumnsError) {
+    throw new Error(`Supabase indexed_disputes migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${indexedDisputeColumnsError.message}`);
+  }
+  console.log("ok indexed_disputes onchain-state columns");
 
   const { error: appEventsColumnsError } = await supabase
     .from("app_events")
@@ -50,7 +69,7 @@ async function main() {
 
   const { error: deliverableColumnsError } = await supabase
     .from("deliverables")
-    .select("visibility,client_wallet,agent_owner_wallet,evaluator_wallet")
+    .select("deliverable_hash,deliverable_uri,chain_id,job_id,agent_id,agent_name,agent_category,job_title,job_description,deliverable_type,generated_title,generated_content,quality_checklist,created_by_wallet,tx_hash,visibility,client_wallet,agent_owner_wallet,evaluator_wallet,raw,created_at")
     .limit(1);
   if (deliverableColumnsError) {
     throw new Error(`Supabase deliverables migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${deliverableColumnsError.message}`);
@@ -85,28 +104,37 @@ async function main() {
   console.log("ok dispute_evidence submitted_by_role column");
 
   const createdAt = new Date().toISOString();
-  const insertPayload: Record<string, unknown> = {
+  const eventKey = `supabase_check:${createdAt}`;
+  const eventWrite = await insertAppEvent({
     event_type: "supabase_check",
     source: "script",
-    created_at: createdAt
-  };
-  const { error: insertError } = await supabase.from("app_events").insert({
-    ...insertPayload,
     payload: { check: "arcpilot-supabase-check" },
-    event_key: `supabase_check:${createdAt}`
+    event_key: eventKey
   });
-  if (insertError) {
-    throw new Error(`Supabase app_events write test failed: ${insertError.message}`);
-  } else {
-    const { error: deleteError } = await supabase
-      .from("app_events")
-      .delete()
-      .eq("event_type", "supabase_check")
-      .eq("created_at", createdAt);
-    if (deleteError) {
-      throw new Error(`Supabase cleanup failed: ${deleteError.message}`);
-    }
+  if (!eventWrite.ok || eventWrite.reason) {
+    throw new Error(`Supabase app_events modern write test failed: ${eventWrite.reason || "unknown error"}`);
   }
+  const repeatEventWrite = await insertAppEvent({
+    event_type: "supabase_check",
+    source: "script",
+    payload: { check: "arcpilot-supabase-check-repeat" },
+    event_key: eventKey
+  });
+  if (!repeatEventWrite.ok || repeatEventWrite.reason) {
+    throw new Error(`Supabase app_events idempotent update test failed: ${repeatEventWrite.reason || "unknown error"}`);
+  }
+  const { count: eventCount, error: eventCountError } = await supabase
+    .from("app_events")
+    .select("*", { count: "exact", head: true })
+    .eq("event_key", eventKey);
+  if (eventCountError || eventCount !== 1) {
+    throw new Error(`Supabase app_events idempotent write verification failed: ${eventCountError?.message || `expected 1 row, found ${eventCount ?? 0}`}`);
+  }
+  const { error: deleteError } = await supabase.from("app_events").delete().eq("event_key", eventKey);
+  if (deleteError) {
+    throw new Error(`Supabase app_events cleanup failed: ${deleteError.message}`);
+  }
+  console.log("ok app_events modern idempotent insert/update/delete");
 
   const temporaryReasonURI = `arcpilot://dispute/supabase-check-${Date.now()}`;
   const { error: disputeInsertError } = await supabase.from("dispute_metadata").insert({

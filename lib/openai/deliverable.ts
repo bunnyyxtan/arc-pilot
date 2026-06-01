@@ -55,7 +55,7 @@ function toSupabaseRow(record: DeliverableRecord): DeliverableRow {
   return {
     deliverable_hash: record.hash,
     deliverable_uri: uri,
-    chain_id: record.chainId ?? null,
+    chain_id: record.chainId ?? 5042002,
     job_id: record.jobId ?? null,
     agent_id: record.agentId ?? null,
     agent_name: record.agentName,

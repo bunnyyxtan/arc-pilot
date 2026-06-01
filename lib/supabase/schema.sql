@@ -4,7 +4,7 @@
 create table if not exists deliverables (
   deliverable_hash text primary key,
   deliverable_uri text unique not null,
-  chain_id numeric default 5042002,
+  chain_id numeric not null default 5042002,
   job_id numeric,
   agent_id numeric,
   agent_name text not null,
@@ -46,7 +46,6 @@ create table if not exists indexed_agents (
   avg_score numeric default 0,
   reputation_score numeric default 0,
   created_at_onchain numeric,
-  payload jsonb default '{}'::jsonb,
   raw jsonb default '{}'::jsonb,
   updated_at timestamptz default now()
 );
@@ -136,7 +135,8 @@ alter table app_events
   add column if not exists payload jsonb default '{}'::jsonb,
   add column if not exists event_key text;
 
-create unique index if not exists app_events_event_key_idx on app_events(event_key) where event_key is not null;
+drop index if exists app_events_event_key_idx;
+create unique index app_events_event_key_idx on app_events(event_key);
 
 create table if not exists agent_metadata (
   id uuid primary key default gen_random_uuid(),
@@ -159,10 +159,17 @@ create index if not exists agent_metadata_chain_id_idx on agent_metadata (chain_
 create index if not exists agent_metadata_agent_name_idx on agent_metadata (agent_name);
 
 alter table deliverables
+  add column if not exists chain_id numeric default 5042002,
   add column if not exists visibility text default 'restricted',
   add column if not exists client_wallet text,
   add column if not exists agent_owner_wallet text,
   add column if not exists evaluator_wallet text;
+
+update deliverables set chain_id = 5042002 where chain_id is null;
+
+alter table deliverables
+  alter column chain_id set default 5042002,
+  alter column chain_id set not null;
 
 create index if not exists deliverables_visibility_idx on deliverables (visibility);
 create index if not exists deliverables_client_wallet_idx on deliverables (client_wallet);

@@ -30,12 +30,22 @@ export async function GET() {
     }
     const { error: indexedAgentColumnsError } = await supabase
       .from("indexed_agents")
-      .select("chain_id,agent_id,display_id,owner_wallet,name,category,metadata_uri,trust_bond,lifetime_earned,completed_jobs,reputation_score,raw")
+      .select("chain_id,agent_id,display_id,owner_wallet,owner,name,category,skills,metadata_uri,operating_wallet,reserve_wallet,active,access_mode,trust_bond,lifetime_earned,completed_jobs,disputed_jobs,avg_score,reputation_score,created_at_onchain,raw,updated_at")
       .limit(1);
     if (indexedAgentColumnsError) warnings.push(`indexed_agents columns: ${indexedAgentColumnsError.message}`);
-    const { error: appEventsColumnsError } = await supabase.from("app_events").select("event_type,source,payload").limit(1);
+    const { error: indexedJobColumnsError } = await supabase
+      .from("indexed_jobs")
+      .select("chain_id,job_id,agent_id,client,status,status_label,deliverable_uri,deliverable_hash,visibility,payload,updated_at")
+      .limit(1);
+    if (indexedJobColumnsError) warnings.push(`indexed_jobs columns: ${indexedJobColumnsError.message}`);
+    const { error: indexedDisputeColumnsError } = await supabase
+      .from("indexed_disputes")
+      .select("dispute_id,job_id,opened_by,outcome,resolved,payload,updated_at")
+      .limit(1);
+    if (indexedDisputeColumnsError) warnings.push(`indexed_disputes columns: ${indexedDisputeColumnsError.message}`);
+    const { error: appEventsColumnsError } = await supabase.from("app_events").select("id,event_type,source,payload,event_key,created_at").limit(1);
     if (appEventsColumnsError) warnings.push(`app_events columns: ${appEventsColumnsError.message}`);
-    const { error: deliverableColumnsError } = await supabase.from("deliverables").select("visibility,client_wallet,agent_owner_wallet,evaluator_wallet").limit(1);
+    const { error: deliverableColumnsError } = await supabase.from("deliverables").select("deliverable_hash,deliverable_uri,chain_id,job_id,agent_id,agent_name,agent_category,job_title,job_description,deliverable_type,generated_title,generated_content,quality_checklist,created_by_wallet,tx_hash,visibility,client_wallet,agent_owner_wallet,evaluator_wallet,raw,created_at").limit(1);
     if (deliverableColumnsError) warnings.push(`deliverables columns: ${deliverableColumnsError.message}`);
     const { error: aiReviewColumnsError } = await supabase.from("ai_dispute_reviews").select("review_round,parent_review_id,is_active,rubric_scores").limit(1);
     if (aiReviewColumnsError) warnings.push(`ai_dispute_reviews columns: ${aiReviewColumnsError.message}`);

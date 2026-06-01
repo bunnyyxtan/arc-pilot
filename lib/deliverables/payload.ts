@@ -22,7 +22,7 @@ export function toApiDeliverable(deliverable: DeliverableRecord, access: Deliver
   const base = {
     deliverable_hash: deliverable.hash,
     deliverable_uri: deliverable.deliverableURI || deliverableURI(deliverable.hash),
-    chain_id: deliverable.chainId ?? null,
+    chain_id: deliverable.chainId ?? 5042002,
     job_id: normalizeId(deliverable.jobId),
     agent_id: normalizeId(deliverable.agentId),
     agent_name: deliverable.agentName,
