@@ -3,6 +3,7 @@ import { backfillLocalDeliverablesToSupabase, findLocalDeliverableForJob } from 
 import { getAgentView, getTotalAgents } from "../lib/sdk/agents";
 import { getDispute, getTotalDisputes } from "../lib/sdk/disputes";
 import { getJobView, getTotalJobs } from "../lib/sdk/jobs";
+import { getDisputeIndexStatus } from "../lib/indexer/dispute-sync";
 import {
   getIndexedJobDeliverable,
   getLatestDeliverableForJob,
@@ -79,6 +80,8 @@ async function main() {
     getTotalJobs(),
     getTotalDisputes()
   ]);
+  const disputeIndexBefore = await getDisputeIndexStatus();
+  const missingDisputeIds = new Set(disputeIndexBefore.missingDisputeIds);
 
   console.log(`Counters: agents=${totalAgents.toString()}, jobs=${totalJobs.toString()}, disputes=${totalDisputes.toString()}`);
 
@@ -94,6 +97,7 @@ async function main() {
   let indexedAgentsUpserted = 0;
   let indexedJobsUpserted = 0;
   let indexedDisputesUpserted = 0;
+  let missingDisputesRecovered = 0;
   let deliverablesLinked = 0;
 
   for (const agent of agents) {
@@ -150,6 +154,7 @@ async function main() {
   for (const dispute of disputes) {
     const result = await upsertIndexedDispute(dispute as unknown as Record<string, unknown>);
     if (result.ok) indexedDisputesUpserted += 1;
+    if (result.ok && missingDisputeIds.has(dispute.disputeId.toString())) missingDisputesRecovered += 1;
     reportWriteResult(warnings, "indexed_disputes", dispute.disputeId.toString(), result, "unknown write error");
 
     const event = await insertAppEvent({
@@ -186,8 +191,9 @@ async function main() {
   console.log(`agent metadata missing: ${metadataMissing.length ? metadataMissing.map((agent) => `agent #${agent.agentId.toString()}`).join(", ") : "none"}`);
   console.log(`Onchain jobs found: ${jobs.length}`);
   console.log(`indexed_jobs upserted: ${indexedJobsUpserted}`);
-  console.log(`Disputes found: ${disputes.length}`);
+  console.log(`Onchain disputes found: ${disputes.length}`);
   console.log(`indexed_disputes upserted: ${indexedDisputesUpserted}`);
+  console.log(`Missing disputes recovered: ${missingDisputesRecovered}`);
   console.log(`Deliverables linked: ${deliverablesLinked}`);
   console.log(`Local deliverables found for Supabase backfill: ${deliverableBackfill.found}`);
   console.log(`Local deliverables saved to Supabase: ${deliverableBackfill.saved}`);

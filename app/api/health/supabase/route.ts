@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getDisputeIndexStatus } from "../../../../lib/indexer/dispute-sync";
 import { logger } from "../../../../lib/logger";
 import { createServiceRoleSupabaseClient } from "../../../../lib/supabase/server";
 
@@ -42,6 +43,13 @@ export async function GET() {
     if (manualReviewColumnsError) warnings.push(`manual_review_requests columns: ${manualReviewColumnsError.message}`);
     const { error: disputeEvidenceColumnsError } = await supabase.from("dispute_evidence").select("submitted_by_role").limit(1);
     if (disputeEvidenceColumnsError) warnings.push(`dispute_evidence columns: ${disputeEvidenceColumnsError.message}`);
+    let disputeIndex = null;
+    try {
+      disputeIndex = await getDisputeIndexStatus("arcTestnet");
+      if (disputeIndex.stale) warnings.push("indexed_disputes is stale");
+    } catch (error) {
+      warnings.push(`dispute index diagnostics: ${error instanceof Error ? error.message : String(error)}`);
+    }
     return NextResponse.json({
       ok: warnings.length === 0,
       configured: true,
@@ -49,6 +57,7 @@ export async function GET() {
       serviceRole: "configured",
       counts,
       tables: counts,
+      disputeIndex,
       warnings
     }, { status: warnings.length === 0 ? 200 : 503 });
   } catch (error) {
@@ -60,6 +69,7 @@ export async function GET() {
       serviceRole: "missing-or-invalid",
       counts: {},
       tables: {},
+      disputeIndex: null,
       warnings: [error instanceof Error ? error.message : "Supabase health check failed."]
     }, { status: 503 });
   }

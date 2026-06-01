@@ -73,6 +73,7 @@ export default function JobDetails() {
   const [showDisputeModal, setShowDisputeModal] = useState(false);
   const [disputeApiLoading, setDisputeApiLoading] = useState(false);
   const [disputeApiError, setDisputeApiError] = useState<string | null>(null);
+  const [disputeSyncNotice, setDisputeSyncNotice] = useState<{ tone: "success" | "warning"; message: string } | null>(null);
   const [gptLoading, setGptLoading] = useState(false);
   const [gptError, setGptError] = useState<string | null>(null);
   const [gptSuccess, setGptSuccess] = useState<string | null>(null);
@@ -283,6 +284,7 @@ export default function JobDetails() {
   async function handleConfirmDispute() {
     setDisputeApiLoading(true);
     setDisputeApiError(null);
+    setDisputeSyncNotice(null);
     try {
       const response = await fetch('/api/disputes/metadata', {
         method: "POST",
@@ -313,9 +315,35 @@ export default function JobDetails() {
       });
       
       if (hash) {
+        try {
+          const syncResponse = await fetch("/api/disputes/sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ jobId: String(job.jobId), txHash: hash })
+          });
+          const syncData = await syncResponse.json();
+          if (!syncResponse.ok || !syncData.ok) {
+            const details = [syncData.error, syncData.details].filter(Boolean).join(" ");
+            setDisputeSyncNotice({
+              tone: "warning",
+              message: `Dispute opened onchain, but indexed data needs attention. ${details || "Run npm run arc:supabase:sync to recover the dispute index."}`
+            });
+          } else {
+            setDisputeSyncNotice({
+              tone: "success",
+              message: `Dispute #${String(syncData.disputeId)} opened onchain and indexed.`
+            });
+          }
+        } catch (syncError) {
+          setDisputeSyncNotice({
+            tone: "warning",
+            message: `Dispute opened onchain, but indexed data needs attention. ${syncError instanceof Error ? syncError.message : "Run npm run arc:supabase:sync to recover the dispute index."}`
+          });
+        }
         setShowDisputeModal(false);
         setDisputeApiError(null);
         await load();
+        router.refresh();
       }
     } catch (err) {
       setDisputeApiError(err instanceof Error ? err.message : "Failed to save dispute metadata.");
@@ -422,6 +450,15 @@ export default function JobDetails() {
 
       <TxStatus tx={tx} />
       <WalletFundsNotice />
+      {disputeSyncNotice && (
+        <div className={`rounded-xl border p-4 text-[13px] leading-6 ${
+          disputeSyncNotice.tone === "success"
+            ? "border-success/30 bg-success/5 text-success"
+            : "border-warning/30 bg-warning/5 text-warning"
+        }`}>
+          {disputeSyncNotice.message}
+        </div>
+      )}
       {gptError && <div className="rounded-xl border border-danger/30 bg-danger/5 p-4 text-[13px] text-danger">{gptError}</div>}
       {gptSuccess && <div className="rounded-xl border border-success/30 bg-success/5 p-4 text-[13px] leading-5 text-success">{gptSuccess}</div>}
       {isSelfUse && (

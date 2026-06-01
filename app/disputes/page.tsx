@@ -14,6 +14,7 @@ export default function DisputesDirectory() {
   const [disputes, setDisputes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
   useEffect(() => {
     async function load() {
       try {
@@ -21,6 +22,7 @@ export default function DisputesDirectory() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Failed to read Arc Testnet disputes.");
         setDisputes(data.disputes ?? []);
+        setWarning(typeof data.warning === "string" ? data.warning : null);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to read Arc Testnet disputes.");
       } finally {
@@ -40,6 +42,11 @@ export default function DisputesDirectory() {
         <h1 className="lux-heading text-[36px] tracking-[-0.03em] text-white">Dispute Resolution</h1>
         <p className="lux-copy max-w-2xl text-[15px] text-slate-400">Review Arc Testnet arbitration records and submit evidence from an authorized wallet.</p>
       </div>
+      {warning && (
+        <Card className="border-warning/30 bg-warning/[0.05] p-4 text-[13px] leading-6 text-warning">
+          {warning}
+        </Card>
+      )}
       <div className="grid grid-cols-1 gap-6 stagger-children">
         {disputes.length === 0 ? (
           <Card className="border-dashed border-borderDark/80 bg-white/[0.01] p-16 text-center">

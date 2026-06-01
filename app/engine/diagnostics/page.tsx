@@ -23,6 +23,14 @@ type SupabaseHealthResponse = {
   ok: boolean;
   configured?: boolean;
   tables?: Record<string, number | null>;
+  disputeIndex?: {
+    liveOnchainDisputes: number;
+    indexedDisputes: number;
+    missingIndexedDisputes: number;
+    lastIndexedDisputeId: string | null;
+    missingDisputeIds: string[];
+    stale: boolean;
+  } | null;
   warnings?: string[];
   error?: string;
 };
@@ -115,6 +123,23 @@ export default function EngineDiagnosticsPage() {
           </Card>
         </Section>
       </div>
+
+      <Section title="Dispute Index">
+        <Card className="border-borderDark/80 bg-black/20 p-6 shadow-depth-md">
+          {supabase?.disputeIndex ? (
+            <>
+              <DiagnosticRow label="Live onchain disputes" value={supabase.disputeIndex.liveOnchainDisputes} />
+              <DiagnosticRow label="indexed_disputes rows" value={supabase.disputeIndex.indexedDisputes} />
+              <DiagnosticRow label="Missing indexed disputes" value={supabase.disputeIndex.missingIndexedDisputes} />
+              <DiagnosticRow label="Last dispute ID indexed" value={supabase.disputeIndex.lastIndexedDisputeId ?? "none"} />
+              <DiagnosticRow label="Missing dispute IDs" value={supabase.disputeIndex.missingDisputeIds.length > 0 ? supabase.disputeIndex.missingDisputeIds.join(", ") : "none"} />
+              <DiagnosticRow label="Index status" value={supabase.disputeIndex.stale ? "indexed_disputes is stale" : "current"} />
+            </>
+          ) : (
+            <p className="text-[13px] leading-6 text-slate-400">Dispute index metrics are unavailable.</p>
+          )}
+        </Card>
+      </Section>
 
       <Section title="Deployment Notes">
         <Card className="border-borderDark/80 bg-black/20 p-6 shadow-depth-md">

@@ -39,6 +39,7 @@
     "arc:index-local": "tsx scripts/arcpilot-index-local.ts",
     "arc:supabase:check": "tsx scripts/arcpilot-check-supabase.ts",
     "arc:supabase:sync": "tsx scripts/arcpilot-sync-supabase.ts",
+    "arc:disputes:check": "tsx scripts/arcpilot-check-dispute-index.ts",
     "arc:deliverable-access:check": "tsx scripts/arcpilot-check-deliverable-access.ts",
     "arc:health:check": "tsx scripts/arcpilot-health-check.ts",
     "arc:resolver:check": "tsx scripts/arcpilot-check-resolver-access.ts"

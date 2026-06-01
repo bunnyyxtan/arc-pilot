@@ -1,6 +1,5 @@
-import { buildDisputeListFromEvents } from "../../../lib/indexer/disputes";
+import { getDisputeListWithSelfHeal } from "../../../lib/indexer/dispute-sync";
 import { logger } from "../../../lib/logger";
-import { getIndexedDisputes, upsertIndexedDispute } from "../../../lib/supabase/indexed-data";
 import { getOptionalServiceRoleSupabaseClient } from "../../../lib/supabase/server";
 import { fail, ok } from "../_utils";
 
@@ -53,16 +52,18 @@ async function withDisputeEnrichment(disputes: Array<Record<string, unknown>>) {
 export async function GET() {
   logger.info("api.disputes", "list:received", {}, "Dispute list request received");
   try {
-    const indexedDisputes = await getIndexedDisputes();
-    if (indexedDisputes.length > 0) {
-      logger.info("api.disputes", "list:supabaseSuccess", { count: indexedDisputes.length }, "Dispute list loaded from Supabase");
-      return ok({ disputes: await withDisputeEnrichment(indexedDisputes as Array<Record<string, unknown>>), source: "supabase" });
-    }
-
-    const disputes = await buildDisputeListFromEvents();
-    await Promise.all(disputes.map((dispute) => upsertIndexedDispute(dispute as unknown as Record<string, unknown>)));
-    logger.info("api.disputes", "list:success", { count: disputes.length, source: "indexer" }, "Dispute list request completed");
-    return ok({ disputes: await withDisputeEnrichment(disputes as unknown as Array<Record<string, unknown>>), source: "indexer" });
+    const result = await getDisputeListWithSelfHeal("arcTestnet");
+    logger.info("api.disputes", "list:success", {
+      count: result.disputes.length,
+      source: result.source,
+      recoveredDisputeIds: result.recoveredDisputeIds
+    }, "Dispute list request completed");
+    return ok({
+      disputes: await withDisputeEnrichment(result.disputes),
+      source: result.source,
+      warning: result.warning,
+      recoveredDisputeIds: result.recoveredDisputeIds
+    });
   } catch (error) {
     return fail(error, 500, "api.disputes", "list");
   }
