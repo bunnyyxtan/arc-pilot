@@ -191,6 +191,8 @@ Job classification is persisted canonically as `marketplace` or `self_use`. Expl
 
 The deployed escrow contract intentionally keeps client funding, agent-owner start, and agent-owner submission as separate wallet transactions. After Start Work confirms, the frontend automatically runs the offchain AI generation step and presents Submit Deliverable when the protected URI is ready.
 
+Current deployed contracts do not expose a combined `fund+start+submit` method. The guided frontend removes the manual AI-run click and automates offchain generation after Start Work, but it cannot merge contract state transitions without a contract-level batch or multicall design. A future V2 can add `fundAndStartJob`, an authorized runner or relayer path, and session-key or account-abstraction support. ERC-20 USDC approval and escrow funding also remain separate token and escrow transactions with the current deployment.
+
 Client reviews are optional after approval or dispute creation and are upserted once per client and job. Output regeneration is intentionally limited server-side with `ARC_MAX_REGENERATIONS_PER_JOB` (default `1`). The deployed contracts do not expose a mid-job regeneration fee path, so ArcPilot enforces the retry limit without pretending to charge an onchain fee.
 
 Agent scope is validated before escrow creation and again before AI generation. Clearly unrelated marketplace requests are blocked, and legacy or bypassed out-of-scope jobs receive an auditable refusal deliverable instead of generic chatbot output.

@@ -288,7 +288,7 @@ export default function JobDetails() {
     (jobStatus !== 1 ? "Job is not Funded" : null) ||
     (!agentOwnerAddress ? "Agent owner could not be loaded" : null) ||
     (!isAgentOwner ? "Connected wallet is not agent owner" : null) ||
-    (!walletSession.matchesConnectedWallet ? "Verify wallet session before starting AI work" : null) ||
+    (walletSession.signing ? "Wallet session verification pending" : null) ||
     (pending ? "Transaction pending" : null);
 
   const runGptReason =
@@ -312,7 +312,7 @@ export default function JobDetails() {
   const submitReason =
     walletReason() ||
     (jobStatus !== 2 ? "Job is not Running" : null) ||
-    (!deliverableURI ? "Deliverable URI is required" : null) ||
+    (!deliverableURI ? "Saved output is not ready" : null) ||
     (!agentOwnerAddress ? "Agent owner could not be loaded" : null) ||
     (!isAgentOwner ? "Connected wallet is not agent owner" : null) ||
     (pending ? "Transaction pending" : null);
@@ -480,7 +480,7 @@ export default function JobDetails() {
         setSavedDeliverableVisibility(data.deliverable.visibility);
       }
       if (data.regeneration) setRegeneration(data.regeneration);
-      setGptSuccess(data.message || (data.reused ? `Existing deliverable reused: ${nextURI}` : `Deliverable generated: ${nextURI}`));
+      setGptSuccess(data.reused ? "Existing sealed output is ready." : data.message || "Output ready.");
       setAutoRunFailed(false);
       return nextURI as string;
     } catch (runError) {
@@ -509,7 +509,11 @@ export default function JobDetails() {
     autoRunStarted.current = true;
     setAutoRunFailed(false);
     setGptError(null);
+    setGptSuccess(null);
     try {
+      if (!walletSession.matchesConnectedWallet) {
+        await walletSession.signIn();
+      }
       const hash = await run("Start work", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "markRunning", args: [safeJobId!] });
       if (!hash) return;
       await waitForRunningState();
@@ -666,11 +670,6 @@ export default function JobDetails() {
                       : needsVerifiedSession
                         ? <Button variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>{walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}</Button>
                         : <Button variant="secondary" disabled>{deliverableViewLabel}</Button>}
-                    {jobStatus === 2 && isAgentOwner && (
-                      <Button variant="secondary" onClick={() => runGptAgent(true)} disabled={Boolean(regenerateReason)} title={regenerateReason || undefined}>
-                        {gptLoading ? "Regenerating..." : "Regenerate"}
-                      </Button>
-                    )}
                   </div>
                   {(isAgentOwner || jobStatus >= 3) && (
                     <details className="rounded-xl border border-borderDark bg-black/20 p-4 text-[12px] text-slate-500">
@@ -679,6 +678,14 @@ export default function JobDetails() {
                       <div className="mono-value mt-3 break-all leading-5 text-slate-400">URI {deliverableURI}</div>
                       <Button className="mt-4" variant="secondary" onClick={copyDeliverableURI}>Copy URI</Button>
                       {uriCopied && <span className="ml-3 text-success">URI copied</span>}
+                      {jobStatus === 2 && isAgentOwner && (
+                        <div className="mt-4 border-t border-borderDark pt-4">
+                          <div className="leading-5">Recovery only. Generate a replacement output only when the saved result needs another pass.</div>
+                          <Button className="mt-3" variant="secondary" onClick={() => runGptAgent(true)} disabled={Boolean(regenerateReason)} title={regenerateReason || undefined}>
+                            {gptLoading ? "Regenerating..." : "Retry AI Generation"}
+                          </Button>
+                        </div>
+                      )}
                     </details>
                   )}
                   {jobStatus === 2 && isReviewer && !isAgentOwner && <div className="text-[12px] leading-5 text-slate-500">The agent has generated output but has not submitted it for review yet.</div>}
@@ -702,7 +709,7 @@ export default function JobDetails() {
                 ) : jobStatus === 2 && isAgentOwner ? (
                   <>
                     <div className="text-[13px] leading-6 text-slate-500">
-                      {gptLoading ? "Generating AI output from the confirmed Running job..." : "ArcPilot has not found a saved deliverable yet. Automatic generation runs immediately after Start Work confirms."}
+                      {gptLoading ? "Generating sealed output..." : "ArcPilot has not found a saved deliverable yet. Automatic generation runs immediately after Start Work confirms."}
                     </div>
                     <div className="mt-4 flex flex-wrap gap-3">
                       {!walletSession.matchesConnectedWallet && walletReady && (
@@ -804,7 +811,7 @@ export default function JobDetails() {
               </div>
             </Card>
           </Section>
-          <Section title="Arc Testnet Actions">
+          <Section title="Job Execution">
             <Card className="space-y-3 border-borderDark/60 bg-black/20 p-5 shadow-depth-md">
               {jobStatus === 0 && (
                 <>
@@ -814,18 +821,17 @@ export default function JobDetails() {
               )}
               {jobStatus === 1 && isAgentOwner && (
                 <>
-                  {!walletSession.matchesConnectedWallet && walletReady && (
-                    <Button className="w-full" variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>
-                      {walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}
-                    </Button>
-                  )}
-                  <Button className="w-full" variant="secondary" onClick={() => void startWorkAndGenerate()} disabled={Boolean(markRunningReason)} title={markRunningReason || undefined}>Start Work</Button>
-                  {markRunningReason && <div className="text-[12px] leading-5 text-slate-500">Start Work: {markRunningReason}.</div>}
+                  <Button className="w-full" variant="secondary" onClick={() => void startWorkAndGenerate()} disabled={Boolean(markRunningReason)} title={markRunningReason || undefined}>
+                    {walletSession.signing ? "Waiting For Signature..." : pending ? "Confirming Start Work..." : "Start Work & Generate Output"}
+                  </Button>
+                  <div className="text-[12px] leading-5 text-slate-500">
+                    {markRunningReason ? `Start work: ${markRunningReason}.` : "Start work to generate a sealed output. The result stays locked until escrow review."}
+                  </div>
                 </>
               )}
               {jobStatus === 2 && isAgentOwner && !hasDeliverableURI && (
                 <>
-                  <Button className="w-full" variant="secondary" disabled>{gptLoading ? "Generating AI Output..." : autoRunFailed ? "AI Generation Needs Retry" : "Waiting For Saved Output"}</Button>
+                  <Button className="w-full" variant="secondary" disabled>{gptLoading ? "Generating Sealed Output..." : autoRunFailed ? "AI Generation Needs Retry" : "Waiting For Saved Output"}</Button>
                   <div className="text-[12px] leading-5 text-slate-500">ArcPilot automatically generates offchain output after Start Work. Recovery controls are available in Agent Output.</div>
                 </>
               )}
