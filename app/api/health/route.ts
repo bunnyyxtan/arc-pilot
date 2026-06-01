@@ -11,11 +11,14 @@ export async function GET() {
     contracts: readiness.contracts,
     walletSession: readiness.walletSession,
     openai: readiness.openai,
+    resolverAdminConfigured: readiness.resolverAdminConfigured,
+    resolverWalletCount: readiness.resolverWalletCount,
     services: {
       supabase: { configured: readiness.supabase === "configured" },
       contracts: { configured: readiness.contracts === "configured" },
       walletSession: { configured: readiness.walletSession === "configured" },
-      openai: { configured: readiness.openai === "configured" }
+      openai: { configured: readiness.openai === "configured" },
+      resolverAdmin: { configured: readiness.resolverAdminConfigured }
     },
     missing: readiness.missing,
     invalidContracts: readiness.invalidContracts

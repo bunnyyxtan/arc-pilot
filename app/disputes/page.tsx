@@ -50,11 +50,13 @@ export default function DisputesDirectory() {
                 <div className="flex items-center gap-3">
                   <h3 className="font-heading text-[20px] font-medium text-white">Dispute #{String(dispute.disputeId)}</h3>
                   <DisputeOutcomeBadge outcome={Number(dispute.outcome)} />
-                  {dispute.manualReviewStatus && <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-warning">Manual review {dispute.manualReviewStatus}</span>}
                 </div>
                 <div className="mono-value mt-2 text-[12px] text-slate-500">Job #{String(dispute.jobId)} / Opened by {shortenAddress(dispute.openedBy)}</div>
               </div>
-              <div className="text-[12px] uppercase tracking-[0.18em] text-slate-500">{dispute.resolved ? "Resolved" : "Awaiting resolution"}</div>
+              <div className="grid gap-2 text-right text-[12px] uppercase tracking-[0.18em]">
+                <div className="text-slate-500">{dispute.resolved ? "Resolved onchain" : dispute.manualReviewStatus ? "Under manual review" : "Awaiting resolution"}</div>
+                {dispute.manualReviewStatus && <div className="text-warning">Manual appeal {dispute.manualReviewStatus}</div>}
+              </div>
             </Card>
           </Link>
         ))}

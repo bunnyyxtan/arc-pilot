@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isResolverAdminWallet } from "../../../../lib/auth/resolver";
 import { getVerifiedWalletFromRequest } from "../../../../lib/auth/wallet-session";
 import { getDeliverableAccess, normalizeWallet } from "../../../../lib/deliverables/access";
 import { getDeliverableVisibility, toApiDeliverable } from "../../../../lib/deliverables/payload";
@@ -12,6 +13,7 @@ import { decodeJobURI } from "../../../../lib/contracts/job-uri";
 async function isResolverWallet(viewer: string) {
   const wallet = normalizeWallet(viewer);
   if (!wallet) return false;
+  if (isResolverAdminWallet(wallet)) return true;
   try {
     const contracts = getSdkContracts();
     const [listed, owner] = await Promise.all([

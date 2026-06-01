@@ -12,7 +12,7 @@ import { decodeBrowserJobURI, readAgentView, readDisputeView, readJobView } from
 import { useArcTransaction } from "../../../lib/contracts/hooks";
 import { useWalletSession } from "../../../lib/auth/use-wallet-session";
 import { shortenAddress } from "../../../lib/design/copy";
-import { isResolverAdminWallet } from "../../../lib/disputes/resolver";
+import { isResolverAdminWallet } from "../../../lib/auth/resolver";
 import { formatUSDC } from "../../../lib/format/usdc";
 import { toBigIntSafe } from "../../../lib/format/ids";
 import { logger } from "../../../lib/logger";
@@ -198,11 +198,14 @@ export default function DisputeDetails() {
   const walletAddress = wallet.address?.toLowerCase();
   const participant = walletAddress === String(job.client).toLowerCase() || walletAddress === String(job.evaluator).toLowerCase() || walletAddress === String(agent.owner).toLowerCase();
   const walletReady = wallet.isConnected && wallet.correctNetwork;
-  const authorizedResolver = isResolverAdminWallet(wallet.address) && walletSession.matchesConnectedWallet;
+  const resolverWalletConnected = isResolverAdminWallet(wallet.address);
+  const resolverSessionVerified = resolverWalletConnected
+    && walletSession.matchesConnectedWallet
+    && isResolverAdminWallet(walletSession.verifiedWallet);
   const pending = tx.phase === "pending" || tx.phase === "confirming";
   const decodedJob = decodeBrowserJobURI(job.jobURI);
   const deliverableURI = disputeMetadata?.deliverable_uri || job.deliverableURI || "";
-  const resolverDisabled = !walletReady || !authorizedResolver || dispute.resolved || pending;
+  const resolverDisabled = !walletReady || !resolverSessionVerified || dispute.resolved || pending;
   const sessionReady = walletSession.matchesConnectedWallet;
   const participantDisabledReason = !wallet.isConnected
     ? "Connect a dispute participant wallet to continue."
@@ -349,6 +352,17 @@ export default function DisputeDetails() {
 
       <TxStatus tx={tx} />
 
+      {process.env.NODE_ENV === "development" && (
+        <details className="rounded-xl border border-borderDark/50 bg-black/15 p-4">
+          <summary className="cursor-pointer text-label text-slate-500">Resolver debug</summary>
+          <div className="mono-value mt-3 grid gap-2 text-[11px] leading-5 text-slate-500">
+            <div>connectedWallet: {wallet.address ? shortenAddress(wallet.address) : "not connected"}</div>
+            <div>verifiedSessionWallet: {walletSession.verifiedWallet ? shortenAddress(walletSession.verifiedWallet) : "not verified"}</div>
+            <div>isResolverAdmin: {resolverWalletConnected ? "true" : "false"}</div>
+          </div>
+        </details>
+      )}
+
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
         <Section title="Dispute Overview">
           <Card className="space-y-5 border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
@@ -424,7 +438,7 @@ export default function DisputeDetails() {
         />
       </Section>
 
-      {aiReview && authorizedResolver ? (
+      {aiReview && resolverSessionVerified ? (
         <Section title="Execute Resolution">
           <ResolverActions
             review={aiReview}
@@ -441,12 +455,30 @@ export default function DisputeDetails() {
             onResolveSplit={() => transact("Resolve split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })}
           />
         </Section>
+      ) : aiReview && resolverWalletConnected ? (
+        <Section title="Execute Resolution">
+          <Card className="border-accent/20 bg-accent/[0.035] p-7 shadow-depth-md">
+            <div className="text-label text-accent">Resolver Wallet Connected</div>
+            <h2 className="mt-3 font-heading text-[22px] tracking-[-0.02em] text-white">Verify wallet session to unlock resolver controls.</h2>
+            <p className="mt-3 text-[14px] leading-7 text-slate-400">
+              Sign a wallet message to confirm this resolver session before executing any onchain resolution or updating the manual appeal queue.
+            </p>
+            {walletSession.error && <div className="mt-4 rounded-xl border border-danger/30 bg-danger/5 p-4 text-[13px] leading-6 text-danger">{walletSession.error}</div>}
+            <Button
+              className="mt-5"
+              onClick={() => void walletSession.signIn().catch(() => undefined)}
+              disabled={walletSession.signing || !wallet.correctNetwork}
+            >
+              {walletSession.signing ? "Verifying..." : "Verify Wallet Session"}
+            </Button>
+          </Card>
+        </Section>
       ) : aiReview ? (
         <Section title="Resolution Status">
           <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">
             <div className="text-label text-warning">Resolver Review Pending</div>
             <p className="mt-3 text-[14px] leading-7 text-slate-400">
-              AI Dispute Resolver has reviewed this case. The resolver/admin wallet will execute the final onchain resolution after the evidence and appeals are considered.
+              AI recommendation is ready. Resolver/admin will execute final onchain resolution.
             </p>
           </Card>
         </Section>
@@ -480,7 +512,7 @@ export default function DisputeDetails() {
         )}
       </div>
 
-      {authorizedResolver && (
+      {resolverSessionVerified && (
         <Section title="Manual Appeal Queue">
           <ManualReviewQueue requests={manualRequests} loading={manualLoading} error={manualError} onUpdate={updateManualReview} />
         </Section>

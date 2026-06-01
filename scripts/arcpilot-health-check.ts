@@ -7,6 +7,9 @@ async function main() {
     const response = await fetch(`${baseURL}${path}`);
     const data = await response.json();
     console.log(`${path}: ${response.status} ${JSON.stringify(data)}`);
+    if (path === "/api/health" && (!data.resolverAdminConfigured || Number(data.resolverWalletCount) < 1)) {
+      throw new Error("Resolver/admin wallet configuration is missing.");
+    }
   }
 }
 

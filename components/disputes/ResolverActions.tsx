@@ -34,7 +34,7 @@ export function ResolverActions(props: {
         Execute AI Recommendation
       </Button>
       <details className="mt-6 rounded-xl border border-borderDark/70 bg-black/25 p-4">
-        <summary className="cursor-pointer text-[12px] font-medium uppercase tracking-[0.16em] text-slate-400">Advanced manual resolution</summary>
+        <summary className="cursor-pointer text-[12px] font-medium uppercase tracking-[0.16em] text-slate-400">Advanced Resolver Controls</summary>
         <div className="mt-5 grid gap-5 md:grid-cols-3">
           <Button variant="success" onClick={props.onResolveAgentWins} disabled={props.disabled}>Resolve Agent Wins</Button>
           <div>

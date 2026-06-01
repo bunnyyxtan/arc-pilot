@@ -12,7 +12,6 @@ export type AIDisputeReviewView = {
   evidence_summary: string | null;
   fairness_notes: string | null;
   risk_flags: string[] | null;
-  reviewer_model?: string | null;
   review_uri?: string | null;
   review_round?: number | string | null;
   created_at?: string | null;
@@ -121,7 +120,6 @@ export function AIDisputeReviewCard(props: {
           <details className="rounded-xl border border-borderDark/70 bg-black/25 p-4">
             <summary className="cursor-pointer text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Developer details</summary>
             <div className="mono-value mt-4 grid gap-2 text-[11px] leading-5 text-slate-500">
-              <div>Model: {props.review.reviewer_model || "Not recorded"}</div>
               <div>Reviewed at: {props.review.created_at || "Not recorded"}</div>
               <div>Review URI: {props.review.review_uri || "Not recorded"}</div>
             </div>

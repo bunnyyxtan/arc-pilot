@@ -1,7 +1,7 @@
 import { parseUsdc } from "../../../../../lib/format/usdc";
 import { logger } from "../../../../../lib/logger";
 import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
-import { isResolverAdminWallet } from "../../../../../lib/disputes/resolver";
+import { isResolverAdminWallet } from "../../../../../lib/auth/resolver";
 import { resolveAgentWins, resolveClientWins, resolveSplit } from "../../../../../lib/sdk/disputes";
 import { bodyPrivateKey, fail, ok, readJson, routeBigInt } from "../../../_utils";
 
@@ -11,7 +11,7 @@ export async function POST(request: Request, context: { params: Promise<{ disput
   try {
     if (!isResolverAdminWallet(getVerifiedWalletFromRequest(request))) {
       return fail(
-        new Error("Only the ArcPilot resolver/admin wallet can execute dispute resolution."),
+        new Error("Only resolver/admin wallet can execute dispute resolution."),
         403,
         "api.disputes.resolve",
         "resolve"

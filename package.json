@@ -40,7 +40,8 @@
     "arc:supabase:check": "tsx scripts/arcpilot-check-supabase.ts",
     "arc:supabase:sync": "tsx scripts/arcpilot-sync-supabase.ts",
     "arc:deliverable-access:check": "tsx scripts/arcpilot-check-deliverable-access.ts",
-    "arc:health:check": "tsx scripts/arcpilot-health-check.ts"
+    "arc:health:check": "tsx scripts/arcpilot-health-check.ts",
+    "arc:resolver:check": "tsx scripts/arcpilot-check-resolver-access.ts"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.6.1",

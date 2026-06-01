@@ -13,6 +13,8 @@ type HealthResponse = {
   chainMode?: string;
   missing?: string[];
   invalidContracts?: string[];
+  resolverAdminConfigured?: boolean;
+  resolverWalletCount?: number;
   services?: Record<string, { configured: boolean }>;
   error?: string;
 };
@@ -97,6 +99,8 @@ export default function EngineDiagnosticsPage() {
         <Section title="Environment Readiness">
           <Card className="border-borderDark/80 bg-black/20 p-6 shadow-depth-md">
             <DiagnosticRow label="Chain mode" value={health?.chainMode ?? "Checking..."} />
+            <DiagnosticRow label="Resolver admin" value={health?.resolverAdminConfigured ? "configured" : "missing"} />
+            <DiagnosticRow label="Resolver wallet count" value={health?.resolverWalletCount ?? "Checking..."} />
             {Object.entries(health?.services ?? {}).map(([name, service]) => (
               <DiagnosticRow key={name} label={name} value={service.configured ? "configured" : "missing"} />
             ))}

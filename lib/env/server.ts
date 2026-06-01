@@ -1,4 +1,5 @@
 import { isAddress } from "viem";
+import { getResolverAdminWallets } from "../auth/resolver";
 
 const REQUIRED_PRODUCTION_ENV = [
   "ARC_TESTNET_RPC_URL",
@@ -35,16 +36,19 @@ export function getServerEnvReadiness() {
   const missing = REQUIRED_PRODUCTION_ENV.filter((name) => !present(name));
   const invalidContracts = CONTRACT_ENV.filter((name) => present(name) && !isAddress(process.env[name] || ""));
   const walletSecret = process.env.ARC_WALLET_SESSION_SECRET || "";
+  const resolverWalletCount = getResolverAdminWallets().length;
   return {
     environment: process.env.NODE_ENV || "development",
     chainMode,
-    ok: chainMode === "arc" && missing.length === 0 && invalidContracts.length === 0 && walletSecret.length >= 32,
+    ok: chainMode === "arc" && missing.length === 0 && invalidContracts.length === 0 && walletSecret.length >= 32 && resolverWalletCount > 0,
     missing,
     invalidContracts,
     supabase: present("NEXT_PUBLIC_SUPABASE_URL") && present("SUPABASE_SERVICE_ROLE_KEY") ? "configured" : "missing",
     contracts: CONTRACT_ENV.every((name) => present(name) && isAddress(process.env[name] || "")) ? "configured" : "missing",
     walletSession: walletSecret.length >= 32 ? "configured" : "missing",
-    openai: present("OPENAI_API_KEY") ? "configured" : "missing"
+    openai: present("OPENAI_API_KEY") ? "configured" : "missing",
+    resolverAdminConfigured: resolverWalletCount > 0,
+    resolverWalletCount
   };
 }
 
@@ -58,6 +62,8 @@ export function safeEnvLogContext() {
     supabase: readiness.supabase,
     contracts: readiness.contracts,
     walletSession: readiness.walletSession,
-    openai: readiness.openai
+    openai: readiness.openai,
+    resolverAdminConfigured: readiness.resolverAdminConfigured,
+    resolverWalletCount: readiness.resolverWalletCount
   };
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getVerifiedWalletFromRequest } from "../../../../../lib/auth/wallet-session";
 import { normalizeWallet } from "../../../../../lib/deliverables/access";
-import { isResolverAdminWallet } from "../../../../../lib/disputes/resolver";
+import { isResolverAdminWallet } from "../../../../../lib/auth/resolver";
 import { getAgent } from "../../../../../lib/sdk/agents";
 import { getDispute } from "../../../../../lib/sdk/disputes";
 import { getJobView } from "../../../../../lib/sdk/jobs";
