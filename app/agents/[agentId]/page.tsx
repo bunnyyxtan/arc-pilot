@@ -13,7 +13,7 @@ import { useArcTransaction } from "../../../lib/contracts/hooks";
 import { formatAgentDisplayId } from "../../../lib/design/agent-id";
 import { shortenAddress } from "../../../lib/design/copy";
 import { formatUSDC } from "../../../lib/format/usdc";
-import { AgentScoreRing } from "../../../components/agents/AgentScoreRing";
+import { AgentRatingSummary } from "../../../components/agents/AgentRatingSummary";
 import { AgentStatsGrid } from "../../../components/agents/AgentStatsGrid";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { TxStatus } from "../../../components/shared/TxStatus";
@@ -25,6 +25,7 @@ import { WalletFundsNotice } from "../../../components/wallet/WalletFundsNotice"
 import { withPublicMarketplaceStats } from "../../../lib/reputation/public-stats";
 import { toBigIntSafe } from "../../../lib/format/ids";
 import { logger } from "../../../lib/logger";
+import type { AgentReviewRow } from "../../../lib/supabase/types";
 
 export default function AgentDetails() {
   const params = useParams();
@@ -45,6 +46,7 @@ export default function AgentDetails() {
   const [metadataError, setMetadataError] = useState<string | null>(null);
   const [metadataRecord, setMetadataRecord] = useState<unknown>(null);
   const [metadataCopied, setMetadataCopied] = useState(false);
+  const [reviews, setReviews] = useState<AgentReviewRow[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -71,11 +73,18 @@ export default function AgentDetails() {
           readAgentView(publicClient, addresses, safeAgentId),
           readJobs(publicClient, addresses)
         ]);
-        setAgent(withPublicMarketplaceStats(nextAgent, jobs));
+        setAgent({ ...withPublicMarketplaceStats(nextAgent, jobs), reviewSummary: indexedAgent?.reviewSummary });
       } catch (onchainError) {
         if (!indexedAgent) throw onchainError;
         logger.warn("ui.agents.detail", "onchainRead:fallback", { agentId, onchainError }, "Using indexed agent after Arc Testnet read failed");
         setAgent(indexedAgent);
+      }
+      try {
+        const response = await fetch(`/api/agents/${agentId}/reviews`, { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok) setReviews(data.reviews ?? []);
+      } catch {
+        setReviews([]);
       }
     } catch (loadError) {
       logger.warn("ui.agents.detail", "load:failed", { agentId, contractsConfigured: Boolean(addresses), loadError }, "Agent detail failed to load");
@@ -136,11 +145,12 @@ export default function AgentDetails() {
       <div className="glass-card rounded-2xl border border-borderDark/80 bg-[radial-gradient(ellipse_at_top_right,rgba(147,197,253,0.12),transparent_60%),linear-gradient(180deg,rgba(15,23,42,0.8),rgba(8,12,24,0.9))] p-8 shadow-depth-lg">
         <div className="flex flex-col justify-between gap-8 md:flex-row md:items-center">
           <div className="flex items-center gap-8">
-            <AgentScoreRing score={Number(agent.reputationScore)} size="lg" />
+            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-warning/20 bg-warning/[0.06] text-[32px] text-warning">★</div>
             <div>
               <h1 className="lux-heading text-[40px] tracking-[-0.03em]">{agent.name}</h1>
               <div className="mt-2 text-[15px] text-slate-400">{agent.category}</div>
               <div className="mono-value mt-3 text-[12px] text-slate-500">{displayId} / Onchain ID {String(agent.agentId)}</div>
+              <AgentRatingSummary summary={agent.reviewSummary} className="mt-4" />
             </div>
           </div>
           <div className="flex gap-3">
@@ -156,14 +166,36 @@ export default function AgentDetails() {
         </div>
       </Card>
       <Card className="border-warning/20 bg-warning/[0.04] p-5 text-[13px] leading-6 text-slate-400 shadow-depth-sm">
-        <div className="text-label text-warning">Marketplace Reputation</div>
+        <div className="text-label text-warning">Marketplace Reviews</div>
         <div className="mt-2">
-          Public passport metrics count third-party client work only. Self-use and test runs remain auditable onchain but do not increase public reputation.
+          Verified client reviews count third-party completed work only. Self-use and test runs remain auditable onchain but do not affect public ratings.
         </div>
       </Card>
       <TxStatus tx={tx} />
       <WalletFundsNotice />
       <Section title="Performance Overview"><AgentStatsGrid stats={agent.stats} /></Section>
+      <Section title="Client Reviews">
+        <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-inset">
+          {reviews.length === 0 ? (
+            <div className="text-[13px] leading-6 text-slate-500">No reviews yet.</div>
+          ) : (
+            <div className="grid gap-5">
+              {reviews.map((review) => (
+                <div key={review.id || `${review.job_id}-${review.client_wallet}`} className="border-b border-borderDark pb-5 last:border-b-0 last:pb-0">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-warning">{"★".repeat(Number(review.rating))}</span>
+                    <span className="mono-value text-[12px] text-slate-500">Job #{String(review.job_id)}</span>
+                    <span className="mono-value text-[12px] text-slate-500">{shortenAddress(review.client_wallet)}</span>
+                  </div>
+                  {review.review_text && <div className="mt-3 text-[13px] leading-6 text-slate-300">{review.review_text}</div>}
+                  {Array.isArray(review.tags) && review.tags.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{review.tags.map((tag) => <span key={String(tag)} className="rounded-full border border-borderDark px-3 py-1 text-[11px] text-slate-400">{String(tag)}</span>)}</div>}
+                  {review.created_at && <div className="mt-3 text-[11px] text-slate-600">{new Date(review.created_at).toLocaleDateString()}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </Section>
       <div className="grid gap-8 lg:grid-cols-2">
         <Section title="Identity Details">
           <Card className="space-y-4 border-borderDark/60 bg-black/20 p-7 shadow-depth-inset">

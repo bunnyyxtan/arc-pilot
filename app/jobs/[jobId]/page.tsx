@@ -20,6 +20,7 @@ import { DisputeConfirmModal } from "../../../components/jobs/DisputeConfirmModa
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
+import { Textarea } from "../../../components/ui/Textarea";
 import { Section } from "../../../components/ui/Section";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { WalletFundsNotice } from "../../../components/wallet/WalletFundsNotice";
@@ -54,6 +55,8 @@ type CompactDeliverable = {
   quality_checklist?: string[];
 };
 
+const REVIEW_TAGS = ["fast", "accurate", "high quality", "clear communication", "needs improvement"];
+
 export default function JobDetails() {
   const params = useParams();
   const router = useRouter();
@@ -81,6 +84,14 @@ export default function JobDetails() {
   const [deliverableSource, setDeliverableSource] = useState<string | null>(null);
   const [savedDeliverableVisibility, setSavedDeliverableVisibility] = useState<"public" | "restricted" | null>(null);
   const [compactDeliverable, setCompactDeliverable] = useState<CompactDeliverable | null>(null);
+  const [existingReview, setExistingReview] = useState<any>(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewText, setReviewText] = useState("");
+  const [reviewTags, setReviewTags] = useState<string[]>([]);
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewSuccess, setReviewSuccess] = useState<string | null>(null);
+  const [approvalJustCompleted, setApprovalJustCompleted] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -139,6 +150,17 @@ export default function JobDetails() {
         }
       } catch {
         // The live contract remains the source of truth if the cache lookup is unavailable.
+      }
+      if (Number(nextJob.status) === 4) {
+        try {
+          const response = await fetch(`/api/agents/${String(nextJob.agentId)}/reviews?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
+          const data = await response.json();
+          if (response.ok) setExistingReview(data.reviewForJob ?? null);
+        } catch {
+          setExistingReview(null);
+        }
+      } else {
+        setExistingReview(null);
       }
     } catch (loadError) {
       logger.warn("ui.jobs.detail", "load:failed", { jobId, contractsConfigured: Boolean(addresses), loadError }, "Job detail failed to load");
@@ -281,6 +303,33 @@ export default function JobDetails() {
     await transact("Fund escrow", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "fundJob", args: [safeJobId!] });
   }
 
+  async function approveWork() {
+    const hash = await transact("Approve and release", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] });
+    if (hash) setApprovalJustCompleted(true);
+  }
+
+  async function submitReview() {
+    setReviewSubmitting(true);
+    setReviewError(null);
+    setReviewSuccess(null);
+    try {
+      const response = await fetch(`/api/agents/${String(agent.agentId)}/reviews`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, rating: reviewRating, reviewText, tags: reviewTags })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.review) throw new Error(data.error || "Agent review could not be saved.");
+      setExistingReview(data.review);
+      setReviewSuccess("Your review has been submitted.");
+      setApprovalJustCompleted(false);
+    } catch (reviewSubmitError) {
+      setReviewError(reviewSubmitError instanceof Error ? reviewSubmitError.message : "Agent review could not be saved.");
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }
+
   async function handleConfirmDispute() {
     setDisputeApiLoading(true);
     setDisputeApiError(null);
@@ -385,7 +434,7 @@ export default function JobDetails() {
       if (data.deliverable?.visibility === "public" || data.deliverable?.visibility === "restricted") {
         setSavedDeliverableVisibility(data.deliverable.visibility);
       }
-      setGptSuccess(data.reused ? data.message || `Existing deliverable reused: ${nextURI}` : `Deliverable generated: ${nextURI}`);
+      setGptSuccess(data.message || (data.reused ? `Existing deliverable reused: ${nextURI}` : `Deliverable generated: ${nextURI}`));
     } catch (runError) {
       setGptError(runError instanceof Error ? runError.message : "AI agent run failed.");
     } finally {
@@ -465,7 +514,7 @@ export default function JobDetails() {
         <div className="rounded-xl border border-warning/25 bg-warning/[0.05] p-5">
           <div className="text-label text-warning">Self-use / Test Run</div>
           <div className="mt-2 text-[13px] leading-6 text-slate-400">
-            Self-use job detected. This run will not count toward public marketplace reputation.
+            Self-use job detected. This run will not count toward public marketplace ratings.
             {!selfUseExplicit && " Complete the normal approval flow to unlock the sealed result."}
           </div>
         </div>
@@ -543,7 +592,7 @@ export default function JobDetails() {
                       </Button>
                     )}
                     {jobStatus === 3 && isReviewer && (
-                      <Button variant="success" onClick={() => transact("Approve and release", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] })} disabled={Boolean(approveReason)} title={approveReason || undefined}>
+                      <Button variant="success" onClick={approveWork} disabled={Boolean(approveReason)} title={approveReason || undefined}>
                         Approve And Release
                       </Button>
                     )}
@@ -616,7 +665,7 @@ export default function JobDetails() {
                     Review the protected deliverable preview, then approve the completed work or open a dispute with a clear rejection reason.
                   </div>
                   <div className="mt-5 flex flex-wrap gap-3">
-                    <Button variant="success" onClick={() => transact("Approve and release", { address: addresses.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] })} disabled={Boolean(approveReason)} title={approveReason || undefined}>Approve And Release</Button>
+                    <Button variant="success" onClick={approveWork} disabled={Boolean(approveReason)} title={approveReason || undefined}>Approve And Release</Button>
                     <Button variant="danger" onClick={() => { setDisputeApiError(null); setShowDisputeModal(true); }} disabled={Boolean(openDisputeReason)} title={openDisputeReason || undefined}>Reject To Dispute</Button>
                   </div>
                   {approveReason && <div className="mt-3 text-[12px] leading-5 text-slate-500">Review actions: {approveReason}.</div>}
@@ -624,6 +673,47 @@ export default function JobDetails() {
               )}
             </Card>
           </Section>
+          {jobStatus === 4 && isJobClient && (
+            <Section title="Rate This Agent">
+              <Card className="border-warning/20 bg-warning/[0.035] p-7 shadow-depth-md">
+                {existingReview ? (
+                  <div>
+                    <div className="text-label text-success">Your review has been submitted.</div>
+                    <div className="mt-3 text-warning">{"★".repeat(Number(existingReview.rating || 0))}</div>
+                    {existingReview.review_text && <div className="mt-3 text-[13px] leading-6 text-slate-300">{existingReview.review_text}</div>}
+                  </div>
+                ) : isSelfUse ? (
+                  <div className="text-[13px] leading-6 text-slate-400">Self-use jobs remain auditable but do not count toward public agent ratings.</div>
+                ) : (
+                  <div>
+                    <div className="text-label text-warning">{approvalJustCompleted ? "Work approved. Rate this agent." : "Rate this agent"}</div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {[1, 2, 3, 4, 5].map((rating) => (
+                        <Button key={rating} type="button" size="sm" variant={reviewRating === rating ? "primary" : "secondary"} onClick={() => setReviewRating(rating)}>
+                          {rating} ★
+                        </Button>
+                      ))}
+                    </div>
+                    <Textarea className="mt-4" label="Written review (optional)" placeholder="Share specific feedback about the completed work." value={reviewText} onChange={(event) => setReviewText(event.target.value)} />
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {REVIEW_TAGS.map((tag) => (
+                        <Button key={tag} type="button" size="sm" variant={reviewTags.includes(tag) ? "primary" : "secondary"} onClick={() => setReviewTags((current) => current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag])}>
+                          {tag}
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="mt-5 flex flex-wrap gap-3">
+                      {!walletSession.matchesConnectedWallet && <Button variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>{walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}</Button>}
+                      <Button onClick={submitReview} disabled={reviewSubmitting || reviewRating < 1 || !walletSession.matchesConnectedWallet}>{reviewSubmitting ? "Submitting..." : "Submit Review"}</Button>
+                      {approvalJustCompleted && <Button variant="ghost" onClick={() => setApprovalJustCompleted(false)}>Skip For Later</Button>}
+                    </div>
+                    {reviewError && <div className="mt-4 text-[13px] leading-6 text-danger">{reviewError}</div>}
+                    {reviewSuccess && <div className="mt-4 text-[13px] leading-6 text-success">{reviewSuccess}</div>}
+                  </div>
+                )}
+              </Card>
+            </Section>
+          )}
         </div>
         <div className="flex flex-col gap-8">
           <Section title="Escrow Configuration">

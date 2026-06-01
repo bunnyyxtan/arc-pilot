@@ -39,6 +39,40 @@ export type AgentMetadataRow = {
   updated_at?: string;
 };
 
+export type JobScopeCheckRow = {
+  id?: string;
+  chain_id: number;
+  job_id?: number | string | null;
+  agent_id: number | string;
+  client_wallet?: string | null;
+  job_title: string;
+  job_description: string;
+  agent_category: string;
+  agent_skills?: Json;
+  in_scope: boolean;
+  scope_confidence: "low" | "medium" | "high";
+  scope_reason: string;
+  matched_skills?: Json;
+  missing_capabilities?: Json;
+  decision: "allow" | "warn" | "block";
+  raw?: Json;
+  created_at?: string;
+};
+
+export type AgentReviewRow = {
+  id?: string;
+  chain_id: number;
+  agent_id: number | string;
+  job_id: number | string;
+  client_wallet: string;
+  rating: number;
+  review_text?: string | null;
+  tags?: Json;
+  raw?: Json;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type IndexedAgentRow = {
   chain_id?: number | null;
   agent_id: string;
@@ -122,7 +156,7 @@ export type AIDisputeReviewRow = {
   job_id: number | string;
   agent_id?: number | string | null;
   reviewer_model?: string | null;
-  recommended_outcome: "agent_wins" | "client_wins" | "split" | "manual_review_required";
+  recommended_outcome: "agent_wins" | "client_wins" | "split" | "needs_admin_review" | "manual_review_required";
   confidence?: number | null;
   agent_bps?: number | null;
   client_bps?: number | null;
@@ -137,6 +171,13 @@ export type AIDisputeReviewRow = {
   review_round?: number | null;
   parent_review_id?: string | null;
   is_active?: boolean | null;
+  model_recommendation?: string | null;
+  guarded_recommendation?: string | null;
+  evidence_considered?: boolean | null;
+  client_claim_strength?: "weak" | "medium" | "strong" | null;
+  agent_deliverable_strength?: "weak" | "medium" | "strong" | null;
+  scope_assessment?: "in_scope" | "out_of_scope" | "unclear" | null;
+  bad_faith_risk?: "low" | "medium" | "high" | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -194,6 +235,16 @@ export type Database = {
         Row: AgentMetadataRow;
         Insert: AgentMetadataRow;
         Update: Partial<AgentMetadataRow>;
+      };
+      job_scope_checks: {
+        Row: JobScopeCheckRow;
+        Insert: JobScopeCheckRow;
+        Update: Partial<JobScopeCheckRow>;
+      };
+      agent_reviews: {
+        Row: AgentReviewRow;
+        Insert: AgentReviewRow;
+        Update: Partial<AgentReviewRow>;
       };
       indexed_jobs: {
         Row: IndexedJobRow;

@@ -43,6 +43,10 @@ export type AgentView = {
   trustBond: bigint;
   treasuryPolicy: TreasuryPolicyView;
   spendingPolicy: SpendingPolicyView;
+  reviewSummary?: {
+    averageRating: number;
+    reviewCount: number;
+  };
 };
 
 export type JobView = {

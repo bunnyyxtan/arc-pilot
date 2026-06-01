@@ -185,4 +185,8 @@ Never expose private keys or `OPENAI_API_KEY`. Keep real secrets in local `.env`
 
 Run `npm run arc:deliverable-access:check` after changing deliverable access rules. For manual QA, use separate wallets: wallet A as agent owner, wallet B as client or evaluator, and an incognito browser without a wallet. Verify that a Running draft is locked for wallet B and incognito, submitted restricted output is preview-only for wallet B after signed verification, and completed public output opens without a signed session.
 
-Generated marketplace output is sealed until escrow approval, including for the agent owner. A job can be explicitly classified as `self_use` when the client wallet owns the selected agent; that test-run mode remains auditable but is excluded from public marketplace reputation. Treasury pages intentionally continue to show raw onchain accounting, while public passports and dashboard reputation use third-party client work only.
+Generated marketplace output is sealed until escrow approval, including for the agent owner. A job can be explicitly classified as `self_use` when the client wallet owns the selected agent; that test-run mode remains auditable but is excluded from public marketplace ratings. Treasury pages intentionally continue to show raw onchain accounting, while public passports use verified third-party client ratings and reviews.
+
+Agent scope is validated before escrow creation and again before AI generation. Clearly unrelated marketplace requests are blocked, and legacy or bypassed out-of-scope jobs receive an auditable refusal deliverable instead of generic chatbot output.
+
+Dispute AI output is advisory. ArcPilot persists the model recommendation and a deterministic guarded recommendation, computes evidence presence from saved evidence rows, and prevents unsupported client-win recommendations from flowing through as the default resolver action.

@@ -11,6 +11,8 @@ const TABLES = [
   "dispute_metadata",
   "dispute_evidence",
   "ai_dispute_reviews",
+  "job_scope_checks",
+  "agent_reviews",
   "agent_metadata",
   "app_events"
 ] as const;
@@ -47,12 +49,16 @@ export async function GET() {
     if (appEventsColumnsError) warnings.push(`app_events columns: ${appEventsColumnsError.message}`);
     const { error: deliverableColumnsError } = await supabase.from("deliverables").select("deliverable_hash,deliverable_uri,chain_id,job_id,agent_id,agent_name,agent_category,job_title,job_description,deliverable_type,generated_title,generated_content,quality_checklist,created_by_wallet,tx_hash,visibility,client_wallet,agent_owner_wallet,evaluator_wallet,raw,created_at").limit(1);
     if (deliverableColumnsError) warnings.push(`deliverables columns: ${deliverableColumnsError.message}`);
-    const { error: aiReviewColumnsError } = await supabase.from("ai_dispute_reviews").select("review_round,parent_review_id,is_active,rubric_scores").limit(1);
+    const { error: aiReviewColumnsError } = await supabase.from("ai_dispute_reviews").select("review_round,parent_review_id,is_active,rubric_scores,model_recommendation,guarded_recommendation,evidence_considered,client_claim_strength,agent_deliverable_strength,scope_assessment,bad_faith_risk").limit(1);
     if (aiReviewColumnsError) warnings.push(`ai_dispute_reviews columns: ${aiReviewColumnsError.message}`);
     const { error: manualReviewColumnsError } = await supabase.from("manual_review_requests").select("reviewed_by_wallet,resolver_note,resolved_at").limit(1);
     if (manualReviewColumnsError) warnings.push(`manual_review_requests columns: ${manualReviewColumnsError.message}`);
     const { error: disputeEvidenceColumnsError } = await supabase.from("dispute_evidence").select("submitted_by_role").limit(1);
     if (disputeEvidenceColumnsError) warnings.push(`dispute_evidence columns: ${disputeEvidenceColumnsError.message}`);
+    const { error: jobScopeColumnsError } = await supabase.from("job_scope_checks").select("chain_id,job_id,agent_id,client_wallet,job_title,job_description,agent_category,agent_skills,in_scope,scope_confidence,scope_reason,matched_skills,missing_capabilities,decision,raw,created_at").limit(1);
+    if (jobScopeColumnsError) warnings.push(`job_scope_checks columns: ${jobScopeColumnsError.message}`);
+    const { error: agentReviewColumnsError } = await supabase.from("agent_reviews").select("chain_id,agent_id,job_id,client_wallet,rating,review_text,tags,raw,created_at,updated_at").limit(1);
+    if (agentReviewColumnsError) warnings.push(`agent_reviews columns: ${agentReviewColumnsError.message}`);
     let disputeIndex = null;
     try {
       disputeIndex = await getDisputeIndexStatus("arcTestnet");

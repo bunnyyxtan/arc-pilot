@@ -3,7 +3,7 @@ import { insertAppEvent } from "../lib/supabase/indexed-data";
 import { createServiceRoleSupabaseClient } from "../lib/supabase/server";
 
 const required = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-const tables = ["profiles", "deliverables", "indexed_agents", "indexed_jobs", "indexed_disputes", "app_events", "dispute_metadata", "dispute_evidence", "ai_dispute_reviews", "manual_review_requests", "user_settings"] as const;
+const tables = ["profiles", "deliverables", "indexed_agents", "indexed_jobs", "indexed_disputes", "app_events", "agent_metadata", "job_scope_checks", "agent_reviews", "dispute_metadata", "dispute_evidence", "ai_dispute_reviews", "manual_review_requests", "user_settings"] as const;
 
 function envStatus() {
   loadEnvFiles();
@@ -78,12 +78,30 @@ async function main() {
 
   const { error: aiReviewColumnsError } = await supabase
     .from("ai_dispute_reviews")
-    .select("review_round,parent_review_id,is_active,rubric_scores")
+    .select("review_round,parent_review_id,is_active,rubric_scores,model_recommendation,guarded_recommendation,evidence_considered,client_claim_strength,agent_deliverable_strength,scope_assessment,bad_faith_risk")
     .limit(1);
   if (aiReviewColumnsError) {
     throw new Error(`Supabase ai_dispute_reviews migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${aiReviewColumnsError.message}`);
   }
-  console.log("ok ai_dispute_reviews round/rubric columns");
+  console.log("ok ai_dispute_reviews round/rubric/guarded columns");
+
+  const { error: scopeColumnsError } = await supabase
+    .from("job_scope_checks")
+    .select("chain_id,job_id,agent_id,client_wallet,job_title,job_description,agent_category,agent_skills,in_scope,scope_confidence,scope_reason,matched_skills,missing_capabilities,decision,raw,created_at")
+    .limit(1);
+  if (scopeColumnsError) {
+    throw new Error(`Supabase job_scope_checks migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${scopeColumnsError.message}`);
+  }
+  console.log("ok job_scope_checks policy columns");
+
+  const { error: reviewColumnsError } = await supabase
+    .from("agent_reviews")
+    .select("chain_id,agent_id,job_id,client_wallet,rating,review_text,tags,raw,created_at,updated_at")
+    .limit(1);
+  if (reviewColumnsError) {
+    throw new Error(`Supabase agent_reviews migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${reviewColumnsError.message}`);
+  }
+  console.log("ok agent_reviews rating columns");
 
   const { error: manualReviewColumnsError } = await supabase
     .from("manual_review_requests")
@@ -178,7 +196,14 @@ async function main() {
     chain_id: 5042002,
     dispute_id: 1,
     job_id: 1,
-    recommended_outcome: "manual_review_required",
+    recommended_outcome: "needs_admin_review",
+    model_recommendation: "needs_admin_review",
+    guarded_recommendation: "needs_admin_review",
+    evidence_considered: false,
+    client_claim_strength: "weak",
+    agent_deliverable_strength: "weak",
+    scope_assessment: "unclear",
+    bad_faith_risk: "low",
     confidence: 0,
     agent_bps: 0,
     client_bps: 0,
@@ -194,6 +219,43 @@ async function main() {
   const { error: aiReviewDeleteError } = await supabase.from("ai_dispute_reviews").delete().eq("review_uri", temporaryReviewURI);
   if (aiReviewDeleteError) throw new Error(`Supabase ai_dispute_reviews cleanup failed: ${aiReviewDeleteError.message}`);
   console.log("ok ai_dispute_reviews service-role insert/delete");
+
+  const temporaryScopeTitle = `Supabase scope check ${Date.now()}`;
+  const { error: scopeInsertError } = await supabase.from("job_scope_checks").insert({
+    chain_id: 5042002,
+    agent_id: 1,
+    job_title: temporaryScopeTitle,
+    job_description: "Temporary ArcPilot service-role scope-check write test.",
+    agent_category: "Research",
+    agent_skills: ["research"],
+    in_scope: true,
+    scope_confidence: "high",
+    scope_reason: "Temporary check.",
+    matched_skills: ["research"],
+    missing_capabilities: [],
+    decision: "allow",
+    raw: { check: "arcpilot-supabase-check" }
+  });
+  if (scopeInsertError) throw new Error(`Supabase job_scope_checks write test failed: ${scopeInsertError.message}`);
+  const { error: scopeDeleteError } = await supabase.from("job_scope_checks").delete().eq("job_title", temporaryScopeTitle);
+  if (scopeDeleteError) throw new Error(`Supabase job_scope_checks cleanup failed: ${scopeDeleteError.message}`);
+  console.log("ok job_scope_checks service-role insert/delete");
+
+  const temporaryReviewText = `Supabase review check ${Date.now()}`;
+  const { error: reviewInsertError } = await supabase.from("agent_reviews").insert({
+    chain_id: 5042002,
+    agent_id: 1,
+    job_id: Date.now(),
+    client_wallet: "0x0000000000000000000000000000000000000001",
+    rating: 5,
+    review_text: temporaryReviewText,
+    tags: ["accurate"],
+    raw: { check: "arcpilot-supabase-check" }
+  });
+  if (reviewInsertError) throw new Error(`Supabase agent_reviews write test failed: ${reviewInsertError.message}`);
+  const { error: reviewDeleteError } = await supabase.from("agent_reviews").delete().eq("review_text", temporaryReviewText);
+  if (reviewDeleteError) throw new Error(`Supabase agent_reviews cleanup failed: ${reviewDeleteError.message}`);
+  console.log("ok agent_reviews service-role insert/delete");
 
   const temporaryManualReason = `Temporary ArcPilot manual review write check ${Date.now()}.`;
   const { error: manualInsertError } = await supabase.from("manual_review_requests").insert({

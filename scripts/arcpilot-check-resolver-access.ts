@@ -76,6 +76,11 @@ async function main() {
   }
   console.log("ok user-facing model names hidden");
 
+  const resolverActions = await read("components/disputes/ResolverActions.tsx");
+  assert(!resolverActions.includes("Advanced Settings"), "resolver advanced settings leaked");
+  assert(!resolverActions.includes("<Input"), "resolver payout inputs leaked");
+  console.log("ok resolver payout controls are backend-computed");
+
   await endpointChecks();
 }
 

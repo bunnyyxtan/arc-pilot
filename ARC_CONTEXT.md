@@ -24,7 +24,7 @@ ArcPilot is a financial OS for AI agents on Arc. It combines Solidity contracts,
 6. The OpenAI runner generates deliverables.
 7. Deliverables are saved locally as JSON under `data/deliverables/` with a keccak256 hash.
 8. Job submission stores `local-deliverable://<hash>` onchain.
-9. Approval releases USDC and updates contract stats/scores.
+9. Approval releases USDC and enables a verified client rating and review.
 
 ## Contract Flow
 

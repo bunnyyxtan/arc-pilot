@@ -61,6 +61,9 @@ export async function POST(request: Request) {
       clientWallet: typeof body.clientWallet === "string" ? body.clientWallet : null,
       agentOwnerWallet: typeof body.agentOwnerWallet === "string" ? body.agentOwnerWallet : null,
       evaluatorWallet: typeof body.evaluatorWallet === "string" ? body.evaluatorWallet : null
+      ,
+      agentSkills: Array.isArray(body.agentSkills) ? body.agentSkills.filter((item): item is string => typeof item === "string") : [],
+      agentMetadata: body.agentMetadata ?? null
     });
 
     logger.info("api.agentRunner", "run:success", {

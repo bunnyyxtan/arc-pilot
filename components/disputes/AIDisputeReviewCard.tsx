@@ -3,7 +3,9 @@ import { Card } from "../ui/Card";
 import { Textarea } from "../ui/Textarea";
 
 export type AIDisputeReviewView = {
-  recommended_outcome: "agent_wins" | "client_wins" | "split" | "manual_review_required";
+  recommended_outcome: ReviewOutcome;
+  model_recommendation?: ReviewOutcome | null;
+  guarded_recommendation?: ReviewOutcome | null;
   confidence: number | string | null;
   agent_bps: number | string | null;
   client_bps: number | string | null;
@@ -15,22 +17,35 @@ export type AIDisputeReviewView = {
   review_uri?: string | null;
   review_round?: number | string | null;
   created_at?: string | null;
+  evidence_considered?: boolean | null;
+  client_claim_strength?: "weak" | "medium" | "strong" | null;
+  agent_deliverable_strength?: "weak" | "medium" | "strong" | null;
+  scope_assessment?: "in_scope" | "out_of_scope" | "unclear" | null;
+  bad_faith_risk?: "low" | "medium" | "high" | null;
   rubric_scores?: {
-    jobClarity?: number | string | null;
-    deliverableRelevance?: number | string | null;
+    jobMatch?: number | string | null;
     completeness?: number | string | null;
+    deliverableQuality?: number | string | null;
+    clientReasonSpecificity?: number | string | null;
     evidenceStrength?: number | string | null;
-    rejectionSpecificity?: number | string | null;
-    badFaithIndicators?: number | string | null;
+    scopeAlignment?: number | string | null;
+    badFaithRisk?: number | string | null;
   } | null;
 };
+
+export type ReviewOutcome = "agent_wins" | "client_wins" | "split" | "needs_admin_review" | "manual_review_required";
 
 const OUTCOME_COPY = {
   agent_wins: { label: "Agent Wins", className: "border-success/30 bg-success/10 text-success" },
   client_wins: { label: "Client Wins", className: "border-danger/30 bg-danger/10 text-danger" },
   split: { label: "Split", className: "border-info/30 bg-info/10 text-info" },
+  needs_admin_review: { label: "Needs Admin Review", className: "border-warning/30 bg-warning/10 text-warning" },
   manual_review_required: { label: "Needs Admin Review", className: "border-warning/30 bg-warning/10 text-warning" }
 } as const;
+
+export function getGuardedOutcome(review: AIDisputeReviewView) {
+  return review.guarded_recommendation || review.recommended_outcome;
+}
 
 function confidenceLabel(value: number): { text: string; className: string } {
   if (value >= 0.8) return { text: "High", className: "text-success" };
@@ -50,11 +65,13 @@ export function AIDisputeReviewCard(props: {
   isResolver?: boolean;
   isParticipant?: boolean;
   isPublic?: boolean;
+  evidenceCount: number;
 }) {
-  const outcome = props.review ? OUTCOME_COPY[props.review.recommended_outcome] : null;
+  const guardedOutcome = props.review ? getGuardedOutcome(props.review) : null;
+  const modelOutcome = props.review ? props.review.model_recommendation || props.review.recommended_outcome : null;
+  const outcome = guardedOutcome ? OUTCOME_COPY[guardedOutcome] : null;
   const confidence = props.review ? Math.round(Number(props.review.confidence || 0) * 100) / 100 : 0;
   const confidenceInfo = confidenceLabel(confidence);
-  const hasEvidence = props.review?.evidence_summary && props.review.evidence_summary !== "No additional evidence summary was provided.";
   const reReviewReady = props.newEvidenceAvailable || props.reReviewReason.trim().length >= 20;
 
   /* No review yet */
@@ -101,10 +118,22 @@ export function AIDisputeReviewCard(props: {
           <p className="mt-3 text-[14px] leading-7 text-slate-300">{props.review.reasoning}</p>
         </div>
 
-        {/* Evidence considered */}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-borderDark/70 bg-black/25 p-4">
+            <div className="text-label">Model Recommendation</div>
+            <div className="mt-2 text-[14px] text-slate-300">{modelOutcome ? OUTCOME_COPY[modelOutcome].label : "Not recorded"}</div>
+          </div>
+          <div className="rounded-xl border border-accent/20 bg-accent/[0.035] p-4">
+            <div className="text-label text-accent">Guarded Recommendation</div>
+            <div className="mt-2 text-[14px] text-white">{guardedOutcome ? OUTCOME_COPY[guardedOutcome].label : "Not recorded"}</div>
+          </div>
+        </div>
+
         <div className="flex items-center gap-3 text-[13px] text-slate-400">
-          <span className="text-label">Evidence considered:</span>
-          <span className={hasEvidence ? "text-success" : "text-slate-500"}>{hasEvidence ? "Yes" : "No"}</span>
+          <span className="text-label">Evidence:</span>
+          <span className={props.evidenceCount > 0 ? "text-success" : "text-slate-500"}>
+            {props.evidenceCount > 0 ? `Evidence reviewed: ${props.evidenceCount} submission${props.evidenceCount === 1 ? "" : "s"}.` : "No evidence submitted."}
+          </span>
         </div>
 
         {/* Risk flags */}

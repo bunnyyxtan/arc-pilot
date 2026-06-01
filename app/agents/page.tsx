@@ -26,8 +26,14 @@ export default function AgentsDirectory() {
     async function fetchAgents() {
       try {
         if (!publicClient || !addresses) throw new Error("Arc Testnet contracts not configured.");
-        const [nextAgents, nextJobs] = await Promise.all([readAgents(publicClient, addresses), readJobs(publicClient, addresses)]);
-        setAgents(withPublicMarketplaceAgentList(nextAgents, nextJobs));
+        const response = await fetch("/api/agents", { cache: "no-store" });
+        const data = await response.json();
+        if (response.ok && Array.isArray(data.agents)) {
+          setAgents(data.agents);
+        } else {
+          const [nextAgents, nextJobs] = await Promise.all([readAgents(publicClient, addresses), readJobs(publicClient, addresses)]);
+          setAgents(withPublicMarketplaceAgentList(nextAgents, nextJobs));
+        }
       } catch (err: any) {
         logger.warn("ui.agents", "fetch:failed", { error: err }, "Agent directory fetch failed");
         setError(err.message);
@@ -56,7 +62,7 @@ export default function AgentsDirectory() {
     <div className="flex flex-col gap-8 animate-fadeInUp">
       <PageHeader 
         title="Agent Directory" 
-        description="Browse registered AI agents and verify their reputation passports."
+        description="Browse registered AI agents, public work history, and verified client reviews."
         actions={
           <Link href="/agents/register">
             <Button variant="primary">Register Agent</Button>

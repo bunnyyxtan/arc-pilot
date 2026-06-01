@@ -14,26 +14,94 @@ import { agentJobEscrowAbi } from "../../../lib/contracts/browser-abis";
 import { getBrowserContractAddresses } from "../../../lib/contracts/browser-addresses";
 import { useArcTransaction } from "../../../lib/contracts/hooks";
 
-function encodeJobURI(input: { title: string; description: string; deliverableVisibility: "public" | "restricted"; jobMode: "marketplace" | "self_use" }) {
+function encodeJobURI(input: { title: string; description: string; deliverableVisibility: "public" | "restricted"; jobMode: "marketplace" | "self_use"; scopeCheckId?: string; scopeDecision?: "allow" | "warn" | "block" }) {
   const bytes = new TextEncoder().encode(JSON.stringify(input));
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
   return `arcpilot-job://${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
 }
+
+function detectJobType(title: string, description: string) {
+  const request = `${title} ${description}`.toLowerCase();
+  if (/\b(?:research|analy[sz]e|report|study|investigat)\w*\b/.test(request)) return "research";
+  if (/\b(?:trade|trading|token|chart|portfolio|price action)\w*\b/.test(request)) return "trading";
+  if (/\b(?:write|content|post|thread|caption|script|blog)\w*\b/.test(request)) return "content";
+  if (/\b(?:code|implement|build|debug|fix|api|sdk|contract)\w*\b/.test(request)) return "code";
+  if (/\b(?:song|music|playlist|artist|album)\w*\b/.test(request)) return "music recommendation";
+  return "general";
+}
+
+type ScopeResult = {
+  scopeCheckId: string;
+  selfUseAllowed: boolean;
+  decision: {
+    inScope: boolean;
+    confidence: "low" | "medium" | "high";
+    reason: string;
+    matchedSkills: string[];
+    missingCapabilities: string[];
+    suggestedAction: "allow" | "warn" | "block";
+    agentDomain: string;
+    jobDomain: string;
+  };
+};
 
 export default function CreateJob() {
   const router = useRouter();
   const addresses = getBrowserContractAddresses();
   const { tx, run, wallet } = useArcTransaction();
   const [formData, setFormData] = useState({ agentId: "", title: "", description: "", reward: "", clientBond: "", durationMinutes: "60", evaluator: "", deliverableVisibility: "restricted" as "public" | "restricted", jobMode: "marketplace" as "marketplace" | "self_use" });
+  const [scopeResult, setScopeResult] = useState<ScopeResult | null>(null);
+  const [scopeFingerprint, setScopeFingerprint] = useState("");
+  const [scopeOverride, setScopeOverride] = useState(false);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [scopeError, setScopeError] = useState<string | null>(null);
 
   useEffect(() => {
     const selectedAgent = new URLSearchParams(window.location.search).get("agentId");
     if (selectedAgent) setFormData((current) => ({ ...current, agentId: current.agentId || selectedAgent }));
   }, []);
 
+  const currentScopeFingerprint = JSON.stringify([formData.agentId, formData.title.trim(), formData.description.trim(), formData.jobMode]);
+  const activeScopeResult = scopeFingerprint === currentScopeFingerprint ? scopeResult : null;
+
+  async function checkScope() {
+    setScopeLoading(true);
+    setScopeError(null);
+    try {
+      const response = await fetch(`/api/agents/${formData.agentId}/scope-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobTitle: formData.title,
+          jobDescription: formData.description,
+          jobType: detectJobType(formData.title, formData.description),
+          jobMode: formData.jobMode,
+          clientWallet: wallet.address || null
+        })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.decision || !data.scopeCheckId) throw new Error(data.error || "Agent scope check failed.");
+      const next = data as ScopeResult;
+      setScopeResult(next);
+      setScopeFingerprint(currentScopeFingerprint);
+      setScopeOverride(false);
+      return next;
+    } catch (error) {
+      setScopeError(error instanceof Error ? error.message : "Agent scope check failed.");
+      return null;
+    } finally {
+      setScopeLoading(false);
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!addresses) return;
+    const checked = activeScopeResult ?? await checkScope();
+    if (!checked) return;
+    const blockedMarketplace = checked.decision.suggestedAction === "block" && !checked.selfUseAllowed;
+    const warningNeedsConfirmation = checked.decision.suggestedAction === "warn" && !scopeOverride;
+    if (blockedMarketplace || warningNeedsConfirmation) return;
     const deadline = BigInt(Math.floor(Date.now() / 1000) + Number(formData.durationMinutes) * 60);
     const hash = await run("Create job", {
       address: addresses.AgentJobEscrow,
@@ -45,7 +113,7 @@ export default function CreateJob() {
         parseUnits(formData.reward, 6),
         parseUnits(formData.clientBond || "0", 6),
         deadline,
-        encodeJobURI({ title: formData.title.trim(), description: formData.description.trim(), deliverableVisibility: formData.deliverableVisibility, jobMode: formData.jobMode })
+        encodeJobURI({ title: formData.title.trim(), description: formData.description.trim(), deliverableVisibility: formData.deliverableVisibility, jobMode: formData.jobMode, scopeCheckId: checked.scopeCheckId, scopeDecision: checked.decision.suggestedAction })
       ]
     });
     if (hash) router.push("/jobs");
@@ -102,19 +170,32 @@ export default function CreateJob() {
             </select>
             <div className="mt-3 text-[13px] leading-6 text-slate-500">
               {formData.jobMode === "self_use"
-                ? "Use only when the client wallet owns the selected agent. Self-use runs remain auditable but do not count toward public marketplace reputation."
-                : "Marketplace output stays sealed until escrow approval. Third-party completed work contributes to public agent reputation."}
+                ? "Use only when the client wallet owns the selected agent. Self-use runs remain auditable but do not count toward public marketplace ratings."
+                : "Marketplace output stays sealed until escrow approval. Third-party completed work can receive verified client ratings."}
             </div>
           </div>
           <div className="rounded-xl border border-success/20 bg-success/5 p-5 text-[13px] leading-6 text-success/75">
             Job creation records the request on Arc Testnet. Fund the escrow from the job page after the transaction confirms.
           </div>
+          {activeScopeResult && activeScopeResult.decision.suggestedAction !== "allow" && (
+            <div className={`rounded-xl border p-5 ${activeScopeResult.decision.suggestedAction === "block" && !activeScopeResult.selfUseAllowed ? "border-danger/30 bg-danger/5" : "border-warning/30 bg-warning/5"}`}>
+              <div className={`text-label ${activeScopeResult.decision.suggestedAction === "block" && !activeScopeResult.selfUseAllowed ? "text-danger" : "text-warning"}`}>This agent is not designed for this task.</div>
+              <div className="mt-3 text-[13px] leading-6 text-slate-300">{activeScopeResult.decision.reason} Pick a more suitable agent or edit your request.</div>
+              {activeScopeResult.selfUseAllowed && <div className="mt-2 text-[12px] leading-5 text-warning">Explicit self-use mode allows this auditable test run, but the runner will return a scope refusal instead of unrelated work.</div>}
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button type="button" variant="secondary" onClick={() => { setScopeResult(null); setScopeOverride(false); }}>Edit Request</Button>
+                <Button type="button" variant="secondary" onClick={() => router.push("/agents")}>Choose Another Agent</Button>
+                {activeScopeResult.decision.suggestedAction === "warn" && !scopeOverride && <Button type="button" onClick={() => setScopeOverride(true)}>Continue Anyway</Button>}
+              </div>
+            </div>
+          )}
+          {scopeError && <div className="rounded-xl border border-danger/30 bg-danger/5 p-4 text-[13px] leading-6 text-danger">{scopeError}</div>}
           <TxStatus tx={tx} />
           <WalletFundsNotice />
           <div className="flex justify-end gap-4 border-t border-borderDark/50 pt-6">
             <Button type="button" variant="ghost" onClick={() => router.back()}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={Boolean(unavailable) || tx.phase === "pending" || tx.phase === "confirming"} title={unavailable}>
-              {tx.phase === "pending" || tx.phase === "confirming" ? "Creating..." : unavailable || "Create Job"}
+            <Button type="submit" variant="primary" disabled={Boolean(unavailable) || scopeLoading || tx.phase === "pending" || tx.phase === "confirming"} title={unavailable}>
+              {scopeLoading ? "Checking Scope..." : tx.phase === "pending" || tx.phase === "confirming" ? "Creating..." : unavailable || "Create Job"}
             </Button>
           </div>
         </form>

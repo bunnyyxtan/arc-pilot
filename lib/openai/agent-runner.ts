@@ -4,6 +4,7 @@ import { saveDeliverable } from "./deliverable";
 import { buildSystemPrompt, buildUserPrompt, isArcRelatedRequest, isUnclearJobRequest, type DeliverableType } from "./prompts";
 import { looksVagueDeliverable, sanitizeDeliverableFields } from "./sanitize";
 import { getOpenAIModelConfig } from "./model-config";
+import { validateAgentScope, type AgentScopeDecision } from "../agents/scope-validator";
 
 type RawDeliverable = {
   generatedTitle?: unknown;
@@ -121,13 +122,67 @@ export async function runAgentJob(input: {
   clientWallet?: string | null;
   agentOwnerWallet?: string | null;
   evaluatorWallet?: string | null;
+  agentSkills?: string[];
+  agentMetadata?: unknown;
 }): Promise<{
   generatedTitle: string;
   generatedContent: string;
   qualityChecklist: string[];
   deliverableHash: `0x${string}`;
   deliverableURI: string;
+  refusedOutOfScope?: boolean;
+  scopeDecision?: AgentScopeDecision;
 }> {
+  const scopeDecision = validateAgentScope({
+    agentName: input.agentName,
+    agentCategory: input.agentCategory,
+    skills: input.agentSkills,
+    metadata: input.agentMetadata,
+    jobTitle: input.jobTitle,
+    jobDescription: input.jobDescription,
+    jobType: input.deliverableType
+  });
+  if (scopeDecision.suggestedAction === "block") {
+    const agentSkills = input.agentSkills?.length ? input.agentSkills.join(", ") : "No indexed skills were available.";
+    const saved = await saveDeliverable({
+      ...input,
+      generatedTitle: "Task Outside Agent Scope",
+      generatedContent: [
+        "Task Outside Agent Scope:",
+        "This job appears outside the selected agent's configured category and skills. The agent should not complete unrelated work.",
+        "",
+        `Agent category: ${input.agentCategory}`,
+        `Agent skills: ${agentSkills}`,
+        `Job request: ${input.jobTitle}`,
+        `Why this is outside scope: ${scopeDecision.reason}`,
+        "",
+        "Recommended next step:",
+        "Choose or create an agent whose declared skills match this request, then create a new marketplace job."
+      ].join("\n"),
+      qualityChecklist: [
+        "Agent category checked before generation",
+        "Declared skills compared with the requested task",
+        "Unrelated work refused without generating a generic answer"
+      ],
+      raw: { refusedOutOfScope: true, scopeDecision }
+    });
+    logger.warn("openai.agentRunner", "scope:refused", {
+      agentName: input.agentName,
+      agentCategory: input.agentCategory,
+      jobTitle: input.jobTitle,
+      scopeDecision
+    }, "Out-of-scope agent run refused before OpenAI request");
+    return {
+      generatedTitle: saved.record.generatedTitle,
+      generatedContent: saved.record.generatedContent,
+      qualityChecklist: saved.record.qualityChecklist,
+      deliverableHash: saved.deliverableHash,
+      deliverableURI: saved.deliverableURI,
+      refusedOutOfScope: true,
+      scopeDecision
+    };
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     logger.warn("openai.agentRunner", "env:missingApiKey", { model: getOpenAIModelConfig().deliverableModel }, "OpenAI API key is missing");
     throw new Error("OPENAI_API_KEY is missing. Add it to .env.local or .env.");
@@ -228,6 +283,7 @@ export async function runAgentJob(input: {
     generatedContent: normalized.generatedContent,
     qualityChecklist: normalized.qualityChecklist,
     deliverableHash: saved.deliverableHash,
-    deliverableURI: saved.deliverableURI
+    deliverableURI: saved.deliverableURI,
+    scopeDecision
   };
 }

@@ -3,6 +3,8 @@ export type JobURIPayload = {
   description: string;
   deliverableVisibility?: "public" | "restricted";
   jobMode?: "marketplace" | "self_use";
+  scopeCheckId?: string;
+  scopeDecision?: "allow" | "warn" | "block";
 };
 
 export function encodeJobURI(input: JobURIPayload) {
@@ -25,7 +27,9 @@ export function decodeJobURI(jobURI: string): JobURIPayload | null {
       title: parsed.title,
       description: parsed.description,
       deliverableVisibility: parsed.deliverableVisibility === "public" ? "public" : parsed.deliverableVisibility === "restricted" ? "restricted" : undefined,
-      jobMode: parsed.jobMode === "self_use" ? "self_use" : parsed.jobMode === "marketplace" ? "marketplace" : undefined
+      jobMode: parsed.jobMode === "self_use" ? "self_use" : parsed.jobMode === "marketplace" ? "marketplace" : undefined,
+      scopeCheckId: typeof parsed.scopeCheckId === "string" ? parsed.scopeCheckId : undefined,
+      scopeDecision: parsed.scopeDecision === "allow" || parsed.scopeDecision === "warn" || parsed.scopeDecision === "block" ? parsed.scopeDecision : undefined
     };
   } catch {
     return null;

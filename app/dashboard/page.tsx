@@ -26,8 +26,12 @@ export default function DashboardPage() {
     async function load() {
       try {
         if (!publicClient || !addresses) throw new Error("Arc Testnet contracts not configured.");
-        const [nextAgents, nextJobs] = await Promise.all([readAgents(publicClient, addresses), readJobs(publicClient, addresses)]);
-        setAgents(withPublicMarketplaceAgentList(nextAgents, nextJobs));
+        const [agentsResponse, nextJobs] = await Promise.all([fetch("/api/agents", { cache: "no-store" }), readJobs(publicClient, addresses)]);
+        const agentsData = await agentsResponse.json();
+        const nextAgents = agentsResponse.ok && Array.isArray(agentsData.agents)
+          ? agentsData.agents
+          : withPublicMarketplaceAgentList(await readAgents(publicClient, addresses), nextJobs);
+        setAgents(nextAgents);
         setJobs(nextJobs);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Unable to read Arc Testnet state.");
@@ -43,7 +47,8 @@ export default function DashboardPage() {
     lifetimeEarned: agents.reduce((sum, agent) => sum + BigInt(agent.stats?.lifetimeEarned ?? 0), 0n),
     activeJobs: jobs.filter((job) => [1, 2, 3].includes(Number(job.status))).length,
     disputedJobs: jobs.filter((job) => Number(job.status) === 6).length,
-    avgScore: agents.length ? Math.round(agents.reduce((sum, agent) => sum + Number(agent.reputationScore ?? 0), 0) / agents.length) : 0
+    reviewCount: agents.reduce((sum, agent) => sum + Number(agent.reviewSummary?.reviewCount ?? 0), 0),
+    reviewedAgents: agents.filter((agent) => Number(agent.reviewSummary?.reviewCount ?? 0) > 0).length
   }), [agents, jobs]);
 
   if (loading) return <div className="animate-pulse py-24 text-center text-[13px] text-slate-500">Reading Arc Testnet contracts...</div>;
@@ -57,7 +62,7 @@ export default function DashboardPage() {
           <div className="text-label">Agent Registry</div>
           <div className="mt-3 font-heading text-[48px] text-white">{agents.length}</div>
           <div className="mt-1 text-[13px] text-slate-500">Registered Arc Testnet identities</div>
-          <div className="mt-8 border-t border-borderDark pt-4"><div className="text-label">Average Reputation</div><div className="mono-value mt-2 text-[15px] text-success">{metrics.avgScore}/1000</div></div>
+          <div className="mt-8 border-t border-borderDark pt-4"><div className="text-label">Verified Reviews</div><div className="mono-value mt-2 text-[15px] text-success">{metrics.reviewCount}</div><div className="mt-1 text-[12px] text-slate-500">{metrics.reviewedAgents} reviewed agents</div></div>
           <Link href="/agents"><Button className="mt-6 w-full" variant="secondary">View Agents</Button></Link>
         </Card>
         <Card className="border-borderDark/80 bg-black/20 p-7 shadow-depth-lg lg:col-span-6">

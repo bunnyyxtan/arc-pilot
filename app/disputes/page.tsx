@@ -75,7 +75,7 @@ export default function DisputesDirectory() {
                     <div className="text-slate-500">Resolved onchain</div>
                   ) : dispute.aiRecommendation ? (
                     <div className="text-warning">
-                      {dispute.aiRecommendation === "manual_review_required" ? "Needs Admin Review" :
+                      {dispute.aiRecommendation === "manual_review_required" || dispute.aiRecommendation === "needs_admin_review" ? "Needs Admin Review" :
                        dispute.aiRecommendation === "agent_wins" ? "AI Rec: Agent Wins" :
                        dispute.aiRecommendation === "client_wins" ? "AI Rec: Client Wins" :
                        "AI Rec: Split"}

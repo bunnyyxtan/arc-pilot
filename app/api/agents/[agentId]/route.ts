@@ -4,6 +4,7 @@ import { logger } from "../../../../lib/logger";
 import { fail, ok, routeBigInt } from "../../_utils";
 import { getIndexedAgent, getIndexedJobs } from "../../../../lib/supabase/indexed-data";
 import { withPublicMarketplaceStats } from "../../../../lib/reputation/public-stats";
+import { withAgentReviewSummaries } from "../../../../lib/reputation/reviews";
 
 export async function GET(_request: Request, context: { params: Promise<{ agentId: string }> }) {
   try {
@@ -22,7 +23,8 @@ export async function GET(_request: Request, context: { params: Promise<{ agentI
     const indexedJobs = await getIndexedJobs();
     const jobs = indexedJobs.length > 0 ? indexedJobs : await buildJobListFromEvents();
     logger.info("api.agents", "read:success", { agentId: id }, "Agent read request completed");
-    return ok({ agent: withPublicMarketplaceStats(agent, jobs as Record<string, unknown>[]), source });
+    const [enriched] = await withAgentReviewSummaries([withPublicMarketplaceStats(agent, jobs as Record<string, unknown>[])]);
+    return ok({ agent: enriched, source });
   } catch (error) {
     return fail(error, 500, "api.agents", "read");
   }

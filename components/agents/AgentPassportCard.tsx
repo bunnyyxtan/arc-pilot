@@ -2,8 +2,7 @@ import Link from "next/link";
 import { formatAgentDisplayId } from "../../lib/design/agent-id";
 import { formatUSDC } from "../../lib/format/usdc";
 import type { AgentView } from "../../lib/sdk/types";
-import { AgentScoreRing } from "./AgentScoreRing";
-import { AgentTierBadge } from "./AgentTierBadge";
+import { AgentRatingSummary } from "./AgentRatingSummary";
 import { Card } from "../ui/Card";
 
 export function AgentPassportCard({ agent }: { agent: AgentView }) {
@@ -13,8 +12,8 @@ export function AgentPassportCard({ agent }: { agent: AgentView }) {
     <Link href={`/agents/${agent.agentId}`}>
       <Card variant="glow" className="h-full flex flex-col hover:border-accent/30 transition-all duration-300 overflow-hidden group">
         <div className="p-5 flex gap-4">
-          <div className="shrink-0 transition-transform duration-500 group-hover:scale-105">
-            <AgentScoreRing score={agent.reputationScore} size="sm" />
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-warning/20 bg-warning/[0.06] text-[18px] text-warning transition-transform duration-500 group-hover:scale-105">
+            ★
           </div>
           <div className="flex flex-col min-w-0 flex-1">
             <div className="flex items-start justify-between gap-2">
@@ -27,9 +26,7 @@ export function AgentPassportCard({ agent }: { agent: AgentView }) {
             </div>
             <div className="mb-1 truncate text-[13px] leading-5 text-slate-400">{agent.category || "General Purpose"}</div>
             <div className="mono-value mb-2 text-[11px] text-slate-500">{displayId}</div>
-            <div className="mt-auto">
-              <AgentTierBadge score={agent.reputationScore} />
-            </div>
+            <AgentRatingSummary summary={agent.reviewSummary} className="mt-auto" />
           </div>
         </div>
 

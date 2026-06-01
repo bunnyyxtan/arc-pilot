@@ -9,6 +9,7 @@ import { getAgent } from "../../../../../lib/sdk/agents";
 import { getJob } from "../../../../../lib/sdk/jobs";
 import { submitDeliverable } from "../../../../../lib/sdk/jobs";
 import { getIndexedJobDeliverable, getLatestDeliverableForJob } from "../../../../../lib/supabase/indexed-data";
+import { loadAgentScopeProfile } from "../../../../../lib/agents/profile";
 import { bodyPrivateKey, fail, ok, readJson, routeBigInt } from "../../../_utils";
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
@@ -71,6 +72,7 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
 
     const jobTitle = decoded?.title || String(body.jobTitle || `Job ${id.toString()}`);
     const jobDescription = decoded?.description || String(body.jobDescription || job.jobURI);
+    const scopeProfile = await loadAgentScopeProfile(agent);
     logger.info("api.jobs.run", "run:agentRunnerStart", {
       jobId: id,
       agentId: job.agentId,
@@ -94,6 +96,9 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       clientWallet: String(job.client || ""),
       agentOwnerWallet: String(agent.owner || ""),
       evaluatorWallet: String(job.evaluator || "")
+      ,
+      agentSkills: scopeProfile.skills,
+      agentMetadata: scopeProfile.metadata
     });
 
     let submitResult: unknown;
@@ -107,8 +112,11 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       deliverable: {
         deliverableHash: deliverable.deliverableHash,
         deliverableURI: deliverable.deliverableURI,
-        visibility: decoded?.deliverableVisibility === "public" ? "public" : "restricted"
+        visibility: decoded?.deliverableVisibility === "public" ? "public" : "restricted",
+        refusedOutOfScope: deliverable.refusedOutOfScope === true,
+        scopeDecision: deliverable.scopeDecision
       },
+      message: deliverable.refusedOutOfScope ? "Task outside agent scope. ArcPilot saved a refusal deliverable for review." : undefined,
       submitResult
     });
   } catch (error) {

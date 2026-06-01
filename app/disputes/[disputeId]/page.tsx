@@ -18,7 +18,7 @@ import { toBigIntSafe } from "../../../lib/format/ids";
 import { getDisputeStatus } from "../../../lib/design/status";
 import { logger } from "../../../lib/logger";
 import type { DisputeEvidenceRow } from "../../../lib/supabase/types";
-import { AIDisputeReviewCard, type AIDisputeReviewView } from "../../../components/disputes/AIDisputeReviewCard";
+import { AIDisputeReviewCard, getGuardedOutcome, type AIDisputeReviewView } from "../../../components/disputes/AIDisputeReviewCard";
 import { DisputeOutcomeBadge } from "../../../components/disputes/DisputeOutcomeBadge";
 import { DisputeStatusBadge } from "../../../components/disputes/DisputeStatusBadge";
 import { EvidenceForm } from "../../../components/disputes/EvidenceForm";
@@ -49,9 +49,6 @@ export default function DisputeDetails() {
   const [evidenceRows, setEvidenceRows] = useState<DisputeEvidenceRow[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
-  const [slashAmount, setSlashAmount] = useState("0");
-  const [agentBps, setAgentBps] = useState("5000");
-  const [clientBps, setClientBps] = useState("5000");
   const [aiReview, setAIReview] = useState<AIDisputeReviewView | null>(null);
   const [aiLoading, setAILoading] = useState(false);
   const [aiError, setAIError] = useState<string | null>(null);
@@ -145,11 +142,6 @@ export default function DisputeDetails() {
         setAIReview(review);
         setReReviewUsed(Boolean(data.reReviewUsed));
         setNewEvidenceAvailable(Boolean(data.newEvidenceAvailable));
-        if (review) {
-          setSlashAmount(review.slash_amount || "0");
-          setAgentBps(String(review.agent_bps || 0));
-          setClientBps(String(review.client_bps || 0));
-        }
       } else {
         const data = await reviewResponse.json().catch(() => ({}));
         setAIError(data.error || "AI dispute review could not be loaded.");
@@ -203,6 +195,11 @@ export default function DisputeDetails() {
   const deliverableURI = disputeMetadata?.deliverable_uri || job.deliverableURI || "";
   const resolverDisabled = !walletReady || !resolverSessionVerified || dispute.resolved || pending;
   const sessionReady = walletSession.matchesConnectedWallet;
+  const guardedOutcome = aiReview ? getGuardedOutcome(aiReview) : null;
+  const guardedAgentBps = Number(aiReview?.agent_bps || 0);
+  const guardedClientBps = Number(aiReview?.client_bps || 0);
+  const splitAgentBps = guardedOutcome === "split" && guardedAgentBps + guardedClientBps === 10_000 ? guardedAgentBps : 5000;
+  const splitClientBps = guardedOutcome === "split" && guardedAgentBps + guardedClientBps === 10_000 ? guardedClientBps : 5000;
 
   /* ─── Evidence access control ─── */
   const participantDisabledReason = !wallet.isConnected
@@ -250,9 +247,6 @@ export default function DisputeDetails() {
       setAIReview(data.review);
       setReReviewUsed(Boolean(data.reReviewUsed));
       setNewEvidenceAvailable(Boolean(data.newEvidenceAvailable));
-      setSlashAmount(data.review.slash_amount || "0");
-      setAgentBps(String(data.review.agent_bps || 0));
-      setClientBps(String(data.review.client_bps || 0));
       if (requestReReview) setReReviewReason("");
     } catch (reviewError) {
       setAIError(reviewError instanceof Error ? reviewError.message : "AI dispute review failed.");
@@ -298,11 +292,12 @@ export default function DisputeDetails() {
 
   async function executeAIRecommendation() {
     if (!aiReview) return;
-    if (aiReview.recommended_outcome === "agent_wins") {
+    const recommendation = getGuardedOutcome(aiReview);
+    if (recommendation === "agent_wins") {
       await transact("Execute AI recommendation: agent wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] });
-    } else if (aiReview.recommended_outcome === "client_wins") {
+    } else if (recommendation === "client_wins") {
       await transact("Execute AI recommendation: client wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(aiReview.slash_amount || "0", 6)] });
-    } else if (aiReview.recommended_outcome === "split") {
+    } else if (recommendation === "split") {
       await transact("Execute AI recommendation: split", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(aiReview.agent_bps || 0), BigInt(aiReview.client_bps || 0)] });
     }
   }
@@ -422,6 +417,7 @@ export default function DisputeDetails() {
               isResolver={resolverSessionVerified}
               isParticipant={participant}
               isPublic={false}
+              evidenceCount={evidenceRows.length}
             />
           </WalletSessionGate>
         ) : (
@@ -435,6 +431,7 @@ export default function DisputeDetails() {
             reReviewReason={reReviewReason}
             onReReviewReasonChange={setReReviewReason}
             isPublic
+            evidenceCount={evidenceRows.length}
           />
         )}
       </Section>
@@ -446,16 +443,10 @@ export default function DisputeDetails() {
           <ResolverActions
             review={aiReview}
             disabled={resolverDisabled}
-            slashAmount={slashAmount}
-            agentBps={agentBps}
-            clientBps={clientBps}
-            onSlashAmountChange={setSlashAmount}
-            onAgentBpsChange={setAgentBps}
-            onClientBpsChange={setClientBps}
             onExecuteRecommendation={executeAIRecommendation}
             onResolveAgentWins={() => transact("Resolve: Agent Wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveAgentWins", args: [safeDisputeId!] })}
-            onResolveClientWins={() => transact("Resolve: Client Wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(slashAmount || "0", 6)] })}
-            onResolveSplit={() => transact("Resolve: Split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(agentBps), BigInt(clientBps)] })}
+            onResolveClientWins={() => transact("Resolve: Client Wins", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(aiReview.slash_amount || "0", 6)] })}
+            onResolveSplit={() => transact("Resolve: Split", { address: addresses.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(splitAgentBps), BigInt(splitClientBps)] })}
           />
         ) : resolverWalletConnected && !resolverSessionVerified ? (
           /* Resolver wallet connected but not session verified */

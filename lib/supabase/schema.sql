@@ -158,6 +158,60 @@ create index if not exists agent_metadata_metadata_uri_idx on agent_metadata (me
 create index if not exists agent_metadata_chain_id_idx on agent_metadata (chain_id);
 create index if not exists agent_metadata_agent_name_idx on agent_metadata (agent_name);
 
+create table if not exists job_scope_checks (
+  id uuid primary key default gen_random_uuid(),
+  chain_id numeric default 5042002,
+  job_id numeric,
+  agent_id numeric not null,
+  client_wallet text,
+  job_title text not null,
+  job_description text not null,
+  agent_category text not null,
+  agent_skills jsonb default '[]'::jsonb,
+  in_scope boolean not null,
+  scope_confidence text not null,
+  scope_reason text not null,
+  matched_skills jsonb default '[]'::jsonb,
+  missing_capabilities jsonb default '[]'::jsonb,
+  decision text not null,
+  raw jsonb default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_job_scope_checks_job_id on job_scope_checks(job_id);
+create index if not exists idx_job_scope_checks_agent_id on job_scope_checks(agent_id);
+create index if not exists idx_job_scope_checks_client_wallet on job_scope_checks(client_wallet);
+create index if not exists idx_job_scope_checks_chain_id on job_scope_checks(chain_id);
+
+alter table job_scope_checks enable row level security;
+
+create table if not exists agent_reviews (
+  id uuid primary key default gen_random_uuid(),
+  chain_id numeric default 5042002,
+  agent_id numeric not null,
+  job_id numeric not null,
+  client_wallet text not null,
+  rating numeric not null check (rating between 1 and 5),
+  review_text text,
+  tags jsonb default '[]'::jsonb,
+  raw jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create unique index if not exists idx_agent_reviews_job_client on agent_reviews(chain_id, job_id, client_wallet);
+create index if not exists idx_agent_reviews_agent_id on agent_reviews(agent_id);
+create index if not exists idx_agent_reviews_client_wallet on agent_reviews(client_wallet);
+create index if not exists idx_agent_reviews_chain_id on agent_reviews(chain_id);
+
+alter table agent_reviews enable row level security;
+
+drop policy if exists "agent_reviews_public_read" on agent_reviews;
+create policy "agent_reviews_public_read"
+on agent_reviews
+for select
+using (true);
+
 alter table deliverables
   add column if not exists chain_id numeric default 5042002,
   add column if not exists visibility text default 'restricted',
@@ -274,6 +328,13 @@ create table if not exists ai_dispute_reviews (
   review_round numeric default 1,
   parent_review_id uuid,
   is_active boolean default true,
+  model_recommendation text,
+  guarded_recommendation text,
+  evidence_considered boolean default false,
+  client_claim_strength text,
+  agent_deliverable_strength text,
+  scope_assessment text,
+  bad_faith_risk text,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
@@ -282,7 +343,14 @@ alter table ai_dispute_reviews
   add column if not exists rubric_scores jsonb default '{}'::jsonb,
   add column if not exists review_round numeric default 1,
   add column if not exists parent_review_id uuid,
-  add column if not exists is_active boolean default true;
+  add column if not exists is_active boolean default true,
+  add column if not exists model_recommendation text,
+  add column if not exists guarded_recommendation text,
+  add column if not exists evidence_considered boolean default false,
+  add column if not exists client_claim_strength text,
+  add column if not exists agent_deliverable_strength text,
+  add column if not exists scope_assessment text,
+  add column if not exists bad_faith_risk text;
 
 create index if not exists idx_ai_dispute_reviews_dispute_id on ai_dispute_reviews(dispute_id);
 create index if not exists idx_ai_dispute_reviews_job_id on ai_dispute_reviews(job_id);

@@ -43,19 +43,21 @@ export async function readDisputes(client: PublicClient, addresses: BrowserContr
   return Promise.all(ids.map((id) => readDisputeView(client, addresses, id)));
 }
 
-export function decodeBrowserJobURI(jobURI: string): { title: string; description: string; deliverableVisibility?: "public" | "restricted"; jobMode?: "marketplace" | "self_use" } | null {
+export function decodeBrowserJobURI(jobURI: string): { title: string; description: string; deliverableVisibility?: "public" | "restricted"; jobMode?: "marketplace" | "self_use"; scopeCheckId?: string; scopeDecision?: "allow" | "warn" | "block" } | null {
   if (!jobURI.startsWith("arcpilot-job://")) return null;
   try {
     const encoded = jobURI.slice("arcpilot-job://".length).replaceAll("-", "+").replaceAll("_", "/");
     const binary = atob(encoded);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { title?: unknown; description?: unknown; deliverableVisibility?: unknown; jobMode?: unknown };
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { title?: unknown; description?: unknown; deliverableVisibility?: unknown; jobMode?: unknown; scopeCheckId?: unknown; scopeDecision?: unknown };
     if (typeof parsed.title !== "string" || typeof parsed.description !== "string") return null;
     return {
       title: parsed.title,
       description: parsed.description,
       deliverableVisibility: parsed.deliverableVisibility === "public" ? "public" : parsed.deliverableVisibility === "restricted" ? "restricted" : undefined,
-      jobMode: parsed.jobMode === "self_use" ? "self_use" : parsed.jobMode === "marketplace" ? "marketplace" : undefined
+      jobMode: parsed.jobMode === "self_use" ? "self_use" : parsed.jobMode === "marketplace" ? "marketplace" : undefined,
+      scopeCheckId: typeof parsed.scopeCheckId === "string" ? parsed.scopeCheckId : undefined,
+      scopeDecision: parsed.scopeDecision === "allow" || parsed.scopeDecision === "warn" || parsed.scopeDecision === "block" ? parsed.scopeDecision : undefined
     };
   } catch {
     return null;

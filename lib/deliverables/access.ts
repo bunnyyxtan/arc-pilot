@@ -44,7 +44,7 @@ function draftResult(role: DeliverableViewerRole, input: DeliverableAccessInput)
       mode: "draft",
       viewerRole: role,
       message: selfUseUnlocked
-        ? "Explicit self-use output unlocked for the registered owner. This run does not count toward public marketplace reputation."
+        ? "Explicit self-use output unlocked for the registered owner. This run does not count toward public marketplace ratings."
         : "Output is sealed until settlement to protect marketplace integrity."
     };
   }
@@ -82,7 +82,7 @@ export function getDeliverableAccess(input: DeliverableAccessInput): Deliverable
         access: "full",
         mode: "full",
         viewerRole: role,
-        message: "Explicit self-use output unlocked for the registered owner. This run does not count toward public marketplace reputation."
+        message: "Explicit self-use output unlocked for the registered owner. This run does not count toward public marketplace ratings."
       };
     }
     const access = input.visibility === "public" || participant

@@ -12,7 +12,7 @@ async function withDisputeEnrichment(disputes: Array<Record<string, unknown>>) {
   // Fetch latest active AI review per dispute
   const { data: reviews, error: reviewError } = await supabase
     .from("ai_dispute_reviews")
-    .select("dispute_id,recommended_outcome")
+    .select("dispute_id,recommended_outcome,guarded_recommendation")
     .eq("is_active", true)
     .in("dispute_id", disputeIds)
     .order("created_at", { ascending: false });
@@ -24,7 +24,7 @@ async function withDisputeEnrichment(disputes: Array<Record<string, unknown>>) {
   const latestReviewByDispute = new Map<string, string>();
   for (const review of reviews ?? []) {
     const key = String(review.dispute_id);
-    if (!latestReviewByDispute.has(key)) latestReviewByDispute.set(key, String(review.recommended_outcome));
+    if (!latestReviewByDispute.has(key)) latestReviewByDispute.set(key, String(review.guarded_recommendation || review.recommended_outcome));
   }
 
   // Fetch evidence counts per dispute

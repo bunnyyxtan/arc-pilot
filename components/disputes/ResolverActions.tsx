@@ -1,23 +1,21 @@
-import type { AIDisputeReviewView } from "./AIDisputeReviewCard";
+import { getGuardedOutcome, type AIDisputeReviewView } from "./AIDisputeReviewCard";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
-import { Input } from "../ui/Input";
 
 export function ResolverActions(props: {
   review: AIDisputeReviewView;
   disabled: boolean;
-  slashAmount: string;
-  agentBps: string;
-  clientBps: string;
-  onSlashAmountChange: (value: string) => void;
-  onAgentBpsChange: (value: string) => void;
-  onClientBpsChange: (value: string) => void;
   onExecuteRecommendation: () => void;
   onResolveAgentWins: () => void;
   onResolveClientWins: () => void;
   onResolveSplit: () => void;
 }) {
-  const validSplit = Number(props.agentBps) + Number(props.clientBps) === 10_000;
+  const guardedOutcome = getGuardedOutcome(props.review);
+  const modelOutcome = props.review.model_recommendation || props.review.recommended_outcome;
+  const agentBps = Number(props.review.agent_bps || 0);
+  const clientBps = Number(props.review.client_bps || 0);
+  const slashAmount = props.review.slash_amount || "0";
+  const label = (outcome: string) => outcome === "agent_wins" ? "Agent Wins" : outcome === "client_wins" ? "Client Wins" : outcome === "split" ? "Split" : "Needs Admin Review";
 
   return (
     <Card className="border-accent/20 bg-accent/[0.035] p-7 shadow-depth-md">
@@ -29,11 +27,13 @@ export function ResolverActions(props: {
       {/* AI recommendation summary */}
       <div className="mt-5 rounded-xl border border-borderDark/70 bg-black/25 p-4">
         <div className="text-[12px] text-slate-500">AI Recommendation</div>
-        <div className="mt-2 text-[14px] font-medium text-white">
-          {props.review.recommended_outcome === "agent_wins" && "Agent Wins"}
-          {props.review.recommended_outcome === "client_wins" && "Client Wins"}
-          {props.review.recommended_outcome === "split" && "Split"}
-          {props.review.recommended_outcome === "manual_review_required" && "Needs Admin Review"}
+        <div className="mt-2 text-[14px] font-medium text-slate-300">{label(modelOutcome)}</div>
+        <div className="mt-4 text-[12px] text-slate-500">Guarded Recommendation</div>
+        <div className="mt-2 text-[14px] font-medium text-white">{label(guardedOutcome)}</div>
+        <div className="mt-4 grid gap-2 text-[12px] leading-5 text-slate-400 sm:grid-cols-3">
+          <div>Agent receives <span className="mono-value text-white">{agentBps / 100}%</span></div>
+          <div>Client receives <span className="mono-value text-white">{clientBps / 100}%</span></div>
+          <div>Slash amount <span className="mono-value text-white">{slashAmount} USDC</span></div>
         </div>
       </div>
 
@@ -41,7 +41,7 @@ export function ResolverActions(props: {
       <Button
         className="mt-5 w-full"
         onClick={props.onExecuteRecommendation}
-        disabled={props.disabled || props.review.recommended_outcome === "manual_review_required"}
+        disabled={props.disabled || guardedOutcome === "manual_review_required" || guardedOutcome === "needs_admin_review"}
       >
         Execute Recommended Outcome
       </Button>
@@ -54,39 +54,10 @@ export function ResolverActions(props: {
         <Button variant="danger" onClick={props.onResolveClientWins} disabled={props.disabled}>
           Resolve: Client Wins
         </Button>
-        <Button variant="secondary" onClick={props.onResolveSplit} disabled={props.disabled || !validSplit}>
+        <Button variant="secondary" onClick={props.onResolveSplit} disabled={props.disabled}>
           Resolve: Split
         </Button>
       </div>
-
-      {/* Advanced controls collapsed */}
-      <details className="mt-6 rounded-xl border border-borderDark/70 bg-black/25 p-4">
-        <summary className="cursor-pointer text-[12px] font-medium uppercase tracking-[0.16em] text-slate-400">
-          Advanced Settings
-        </summary>
-        <div className="mt-5 grid gap-5 md:grid-cols-3">
-          <Input
-            label="Slash amount (USDC)"
-            type="number"
-            step="0.000001"
-            min="0"
-            value={props.slashAmount}
-            onChange={(event) => props.onSlashAmountChange(event.target.value)}
-          />
-          <Input
-            label="Agent BPS"
-            type="number"
-            value={props.agentBps}
-            onChange={(event) => props.onAgentBpsChange(event.target.value)}
-          />
-          <Input
-            label="Client BPS"
-            type="number"
-            value={props.clientBps}
-            onChange={(event) => props.onClientBpsChange(event.target.value)}
-          />
-        </div>
-      </details>
     </Card>
   );
 }
