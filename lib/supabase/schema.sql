@@ -194,10 +194,14 @@ create table if not exists agent_reviews (
   rating numeric not null check (rating between 1 and 5),
   review_text text,
   tags jsonb default '[]'::jsonb,
+  review_context text default 'approval',
   raw jsonb default '{}'::jsonb,
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+alter table agent_reviews
+  add column if not exists review_context text default 'approval';
 
 create unique index if not exists idx_agent_reviews_job_client on agent_reviews(chain_id, job_id, client_wallet);
 create index if not exists idx_agent_reviews_agent_id on agent_reviews(agent_id);
@@ -211,6 +215,27 @@ create policy "agent_reviews_public_read"
 on agent_reviews
 for select
 using (true);
+
+create table if not exists job_regenerations (
+  id uuid primary key default gen_random_uuid(),
+  chain_id numeric default 5042002,
+  job_id numeric not null,
+  agent_id numeric,
+  requested_by_wallet text,
+  attempt_number numeric not null,
+  deliverable_hash text,
+  deliverable_uri text,
+  created_at timestamptz default now(),
+  raw jsonb default '{}'::jsonb
+);
+
+create unique index if not exists idx_job_regenerations_job_attempt on job_regenerations(chain_id, job_id, attempt_number);
+create index if not exists idx_job_regenerations_job_id on job_regenerations(job_id);
+create index if not exists idx_job_regenerations_agent_id on job_regenerations(agent_id);
+create index if not exists idx_job_regenerations_requested_by_wallet on job_regenerations(requested_by_wallet);
+create index if not exists idx_job_regenerations_chain_id on job_regenerations(chain_id);
+
+alter table job_regenerations enable row level security;
 
 alter table deliverables
   add column if not exists chain_id numeric default 5042002,

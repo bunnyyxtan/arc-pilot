@@ -177,7 +177,7 @@ export async function backfillMissingIndexedDisputes(network?: ArcPilotNetwork, 
 export async function getDisputeListWithSelfHeal(network?: ArcPilotNetwork) {
   const liveDisputes = await readLiveDisputes(network);
   const repair = await backfillMissingIndexedDisputes(network, "api");
-  const snapshot = await readIndexedDisputeSnapshot();
+  let snapshot = await readIndexedDisputeSnapshot();
 
   if (!snapshot.available || repair.after.stale) {
     const warning = snapshot.warning ?? repair.after.warning ?? "indexed_disputes is stale";
@@ -195,8 +195,30 @@ export async function getDisputeListWithSelfHeal(network?: ArcPilotNetwork) {
     };
   }
 
+  const indexedById = new Map(snapshot.disputes.map((dispute) => [String(dispute.disputeId), dispute]));
+  const changedLiveDisputes = liveDisputes.filter((live) => {
+    const indexed = indexedById.get(live.disputeId.toString());
+    return indexed && (
+      Boolean(indexed.resolved) !== live.resolved
+      || Number(indexed.outcome || 0) !== live.outcome
+    );
+  });
+  if (changedLiveDisputes.length > 0) {
+    await Promise.all(changedLiveDisputes.map((dispute) => syncIndexedDispute(dispute, "api-live-refresh")));
+    snapshot = await readIndexedDisputeSnapshot();
+  }
+
+  const liveById = new Map(liveDisputes.map((dispute) => [dispute.disputeId.toString(), dispute]));
+  const disputes = snapshot.disputes.map((indexed) => {
+    const disputeId = toDisputeId(indexed.disputeId);
+    const live = disputeId ? liveById.get(disputeId.toString()) : null;
+    return live ? { ...indexed, ...live } : indexed;
+  });
+
   return {
-    disputes: snapshot.disputes,
+    // Supabase supplies indexed metadata, while live onchain state wins for
+    // resolution fields so stale cache rows cannot reopen resolved disputes.
+    disputes,
     source: "supabase" as const,
     warning: repair.recoveredDisputeIds.length > 0 ? `Recovered missing disputes: ${repair.recoveredDisputeIds.join(", ")}` : undefined,
     recoveredDisputeIds: repair.recoveredDisputeIds

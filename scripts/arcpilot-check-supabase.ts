@@ -3,7 +3,7 @@ import { insertAppEvent } from "../lib/supabase/indexed-data";
 import { createServiceRoleSupabaseClient } from "../lib/supabase/server";
 
 const required = ["NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY"];
-const tables = ["profiles", "deliverables", "indexed_agents", "indexed_jobs", "indexed_disputes", "app_events", "agent_metadata", "job_scope_checks", "agent_reviews", "dispute_metadata", "dispute_evidence", "ai_dispute_reviews", "manual_review_requests", "user_settings"] as const;
+const tables = ["profiles", "deliverables", "indexed_agents", "indexed_jobs", "indexed_disputes", "app_events", "agent_metadata", "job_scope_checks", "agent_reviews", "job_regenerations", "dispute_metadata", "dispute_evidence", "ai_dispute_reviews", "manual_review_requests", "user_settings"] as const;
 
 function envStatus() {
   loadEnvFiles();
@@ -96,12 +96,21 @@ async function main() {
 
   const { error: reviewColumnsError } = await supabase
     .from("agent_reviews")
-    .select("chain_id,agent_id,job_id,client_wallet,rating,review_text,tags,raw,created_at,updated_at")
+    .select("chain_id,agent_id,job_id,client_wallet,rating,review_text,tags,review_context,raw,created_at,updated_at")
     .limit(1);
   if (reviewColumnsError) {
     throw new Error(`Supabase agent_reviews migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${reviewColumnsError.message}`);
   }
-  console.log("ok agent_reviews rating columns");
+  console.log("ok agent_reviews rating/context columns");
+
+  const { error: regenerationColumnsError } = await supabase
+    .from("job_regenerations")
+    .select("chain_id,job_id,agent_id,requested_by_wallet,attempt_number,deliverable_hash,deliverable_uri,raw,created_at")
+    .limit(1);
+  if (regenerationColumnsError) {
+    throw new Error(`Supabase job_regenerations migration is incomplete. Apply lib/supabase/schema.sql in the Supabase SQL editor. Details: ${regenerationColumnsError.message}`);
+  }
+  console.log("ok job_regenerations policy columns");
 
   const { error: manualReviewColumnsError } = await supabase
     .from("manual_review_requests")
@@ -250,12 +259,27 @@ async function main() {
     rating: 5,
     review_text: temporaryReviewText,
     tags: ["accurate"],
+    review_context: "approval",
     raw: { check: "arcpilot-supabase-check" }
   });
   if (reviewInsertError) throw new Error(`Supabase agent_reviews write test failed: ${reviewInsertError.message}`);
   const { error: reviewDeleteError } = await supabase.from("agent_reviews").delete().eq("review_text", temporaryReviewText);
   if (reviewDeleteError) throw new Error(`Supabase agent_reviews cleanup failed: ${reviewDeleteError.message}`);
   console.log("ok agent_reviews service-role insert/delete");
+
+  const temporaryRegenerationJob = Date.now();
+  const { error: regenerationInsertError } = await supabase.from("job_regenerations").insert({
+    chain_id: 5042002,
+    job_id: temporaryRegenerationJob,
+    agent_id: 1,
+    requested_by_wallet: "0x0000000000000000000000000000000000000001",
+    attempt_number: 1,
+    raw: { check: "arcpilot-supabase-check" }
+  });
+  if (regenerationInsertError) throw new Error(`Supabase job_regenerations write test failed: ${regenerationInsertError.message}`);
+  const { error: regenerationDeleteError } = await supabase.from("job_regenerations").delete().eq("job_id", temporaryRegenerationJob);
+  if (regenerationDeleteError) throw new Error(`Supabase job_regenerations cleanup failed: ${regenerationDeleteError.message}`);
+  console.log("ok job_regenerations service-role insert/delete");
 
   const temporaryManualReason = `Temporary ArcPilot manual review write check ${Date.now()}.`;
   const { error: manualInsertError } = await supabase.from("manual_review_requests").insert({

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { formatAgentDisplayId } from "../../lib/design/agent-id";
 import { formatUSDC } from "../../lib/format/usdc";
 import type { AgentView } from "../../lib/sdk/types";
+import { AgentIdentityBadge } from "./AgentIdentityBadge";
 import { AgentRatingSummary } from "./AgentRatingSummary";
 import { Card } from "../ui/Card";
 
@@ -12,21 +13,19 @@ export function AgentPassportCard({ agent }: { agent: AgentView }) {
     <Link href={`/agents/${agent.agentId}`}>
       <Card variant="glow" className="h-full flex flex-col hover:border-accent/30 transition-all duration-300 overflow-hidden group">
         <div className="p-5 flex gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-warning/20 bg-warning/[0.06] text-[18px] text-warning transition-transform duration-500 group-hover:scale-105">
-            ★
+          <div className="transition-transform duration-500 group-hover:scale-105">
+            <AgentIdentityBadge name={agent.name || "ArcPilot Agent"} category={agent.category} />
           </div>
           <div className="flex flex-col min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-2">
+            <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
               <h3 className="truncate font-heading text-[17px] font-medium leading-tight tracking-[0] text-white">{agent.name || "Unnamed Agent"}</h3>
-              {agent.active ? (
-                <div className="w-2 h-2 rounded-full bg-success animate-pulse mt-2 shrink-0"></div>
-              ) : (
-                <div className="w-2 h-2 rounded-full bg-slate-500 mt-2 shrink-0"></div>
-              )}
+              <AgentRatingSummary summary={agent.reviewSummary} />
             </div>
-            <div className="mb-1 truncate text-[13px] leading-5 text-slate-400">{agent.category || "General Purpose"}</div>
-            <div className="mono-value mb-2 text-[11px] text-slate-500">{displayId}</div>
-            <AgentRatingSummary summary={agent.reviewSummary} className="mt-auto" />
+            <div className="mt-1 flex items-center gap-2">
+              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${agent.active ? "bg-success animate-pulse" : "bg-slate-500"}`} />
+              <div className="truncate text-[13px] leading-5 text-slate-400">{agent.category || "General Purpose"}</div>
+            </div>
+            <div className="mono-value mt-2 text-[11px] text-slate-500">{displayId}</div>
           </div>
         </div>
 

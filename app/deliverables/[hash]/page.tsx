@@ -157,7 +157,7 @@ export default function DeliverablePage() {
       functionName: "approveAndRelease",
       args: [BigInt(deliverable.job_id)]
     });
-    if (txHash) await load();
+    if (txHash) router.push(`/jobs/${deliverable.job_id}?feedback=approval`);
   }
 
   if (loading) {
@@ -174,12 +174,14 @@ export default function DeliverablePage() {
   const locked = response?.access === "locked";
   const title = stripMarkdown(deliverable.generated_title || deliverable.job_title || "ArcPilot Deliverable");
   const reportLabel = draft
-    ? "Saved Agent Output"
+    ? "Sealed Preview"
     : disputed
-      ? "Disputed Deliverable Preview"
+      ? "In Dispute"
       : preview
-        ? "Final Deliverable Preview"
-        : "Final Deliverable";
+        ? "Pending Approval"
+        : full
+          ? "Approved"
+          : "Locked until approval";
 
   return (
     <div className="flex flex-col gap-6 pb-12 animate-fadeInUp">
@@ -189,25 +191,6 @@ export default function DeliverablePage() {
             <div className="mb-4 flex flex-wrap gap-2">
               <span className="rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-accent">
                 {reportLabel}
-              </span>
-              {draft && (
-                <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-warning">
-                  Draft / Pre-submit
-                </span>
-              )}
-              {response?.isSelfUse && (
-                <span className="rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-warning">
-                  Self-use / Test Run
-                </span>
-              )}
-              <span className="rounded-full border border-borderDark bg-white/[0.03] px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300">
-                {response?.source === "supabase" ? "Supabase" : "Local Fallback"}
-              </span>
-              <span className="rounded-full border border-borderDark bg-white/[0.03] px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-300">
-                {deliverable.visibility}
-              </span>
-              <span className={`rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] ${full ? "border-success/30 bg-success/10 text-success" : "border-warning/30 bg-warning/10 text-warning"}`}>
-                {response?.jobStatus || "Saved"}
               </span>
             </div>
             <h1 className="lux-heading max-w-4xl text-[34px] tracking-[-0.03em] sm:text-[42px]">{title}</h1>
@@ -230,8 +213,8 @@ export default function DeliverablePage() {
 
       {locked ? (
         <Card className="border-warning/25 bg-warning/[0.04] p-8 shadow-depth-md">
-          <div className="text-label text-warning">{draft ? "Draft / Pre-submit" : "Restricted Escrow Deliverable"}</div>
-          <h2 className="mt-3 font-heading text-[26px] tracking-[-0.02em] text-white">{draft ? "Saved Output Restricted" : "Connect an authorized wallet to preview this deliverable."}</h2>
+          <div className="text-label text-warning">Locked until approval</div>
+          <h2 className="mt-3 font-heading text-[26px] tracking-[-0.02em] text-white">{draft ? "Sealed output" : "Connect an authorized wallet to preview this deliverable."}</h2>
           <p className="mt-3 max-w-2xl text-[14px] leading-7 text-slate-400">
             {draft
               ? "The agent has generated output, but it has not been submitted for client review yet."

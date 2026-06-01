@@ -13,6 +13,7 @@ const TABLES = [
   "ai_dispute_reviews",
   "job_scope_checks",
   "agent_reviews",
+  "job_regenerations",
   "agent_metadata",
   "app_events"
 ] as const;
@@ -57,8 +58,10 @@ export async function GET() {
     if (disputeEvidenceColumnsError) warnings.push(`dispute_evidence columns: ${disputeEvidenceColumnsError.message}`);
     const { error: jobScopeColumnsError } = await supabase.from("job_scope_checks").select("chain_id,job_id,agent_id,client_wallet,job_title,job_description,agent_category,agent_skills,in_scope,scope_confidence,scope_reason,matched_skills,missing_capabilities,decision,raw,created_at").limit(1);
     if (jobScopeColumnsError) warnings.push(`job_scope_checks columns: ${jobScopeColumnsError.message}`);
-    const { error: agentReviewColumnsError } = await supabase.from("agent_reviews").select("chain_id,agent_id,job_id,client_wallet,rating,review_text,tags,raw,created_at,updated_at").limit(1);
+    const { error: agentReviewColumnsError } = await supabase.from("agent_reviews").select("chain_id,agent_id,job_id,client_wallet,rating,review_text,tags,review_context,raw,created_at,updated_at").limit(1);
     if (agentReviewColumnsError) warnings.push(`agent_reviews columns: ${agentReviewColumnsError.message}`);
+    const { error: regenerationColumnsError } = await supabase.from("job_regenerations").select("chain_id,job_id,agent_id,requested_by_wallet,attempt_number,deliverable_hash,deliverable_uri,raw,created_at").limit(1);
+    if (regenerationColumnsError) warnings.push(`job_regenerations columns: ${regenerationColumnsError.message}`);
     let disputeIndex = null;
     try {
       disputeIndex = await getDisputeIndexStatus("arcTestnet");

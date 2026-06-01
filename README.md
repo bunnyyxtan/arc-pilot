@@ -187,6 +187,8 @@ Run `npm run arc:deliverable-access:check` after changing deliverable access rul
 
 Generated marketplace output is sealed until escrow approval, including for the agent owner. A job can be explicitly classified as `self_use` when the client wallet owns the selected agent; that test-run mode remains auditable but is excluded from public marketplace ratings. Treasury pages intentionally continue to show raw onchain accounting, while public passports use verified third-party client ratings and reviews.
 
+Client reviews are optional after approval or dispute creation and are upserted once per client and job. Output regeneration is intentionally limited server-side with `ARC_MAX_REGENERATIONS_PER_JOB` (default `1`). The deployed contracts do not expose a mid-job regeneration fee path, so ArcPilot enforces the retry limit without pretending to charge an onchain fee.
+
 Agent scope is validated before escrow creation and again before AI generation. Clearly unrelated marketplace requests are blocked, and legacy or bypassed out-of-scope jobs receive an auditable refusal deliverable instead of generic chatbot output.
 
 Dispute AI output is advisory. ArcPilot persists the model recommendation and a deterministic guarded recommendation, computes evidence presence from saved evidence rows, and prevents unsupported client-win recommendations from flowing through as the default resolver action.

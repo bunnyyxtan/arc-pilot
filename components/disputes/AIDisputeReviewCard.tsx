@@ -132,7 +132,7 @@ export function AIDisputeReviewCard(props: {
         <div className="flex items-center gap-3 text-[13px] text-slate-400">
           <span className="text-label">Evidence:</span>
           <span className={props.evidenceCount > 0 ? "text-success" : "text-slate-500"}>
-            {props.evidenceCount > 0 ? `Evidence reviewed: ${props.evidenceCount} submission${props.evidenceCount === 1 ? "" : "s"}.` : "No evidence submitted."}
+            {props.evidenceCount > 0 ? `Evidence reviewed: ${props.evidenceCount} submission${props.evidenceCount === 1 ? "" : "s"}.` : "No evidence submitted"}
           </span>
         </div>
 

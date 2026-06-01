@@ -15,7 +15,7 @@ import { shortenAddress } from "../../../lib/design/copy";
 import { isResolverAdminWallet } from "../../../lib/auth/resolver";
 import { formatUSDC } from "../../../lib/format/usdc";
 import { toBigIntSafe } from "../../../lib/format/ids";
-import { getDisputeStatus } from "../../../lib/design/status";
+import { getDisputeStatus } from "../../../lib/disputes/status";
 import { logger } from "../../../lib/logger";
 import type { DisputeEvidenceRow } from "../../../lib/supabase/types";
 import { AIDisputeReviewCard, getGuardedOutcome, type AIDisputeReviewView } from "../../../components/disputes/AIDisputeReviewCard";
@@ -298,7 +298,7 @@ export default function DisputeDetails() {
     } else if (recommendation === "client_wins") {
       await transact("Execute AI recommendation: client wins", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveClientWins", args: [safeDisputeId!, parseUnits(aiReview.slash_amount || "0", 6)] });
     } else if (recommendation === "split") {
-      await transact("Execute AI recommendation: split", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(aiReview.agent_bps || 0), BigInt(aiReview.client_bps || 0)] });
+      await transact("Execute AI recommendation: split", { address: addresses!.DisputeManager, abi: disputeManagerAbi, functionName: "resolveSplit", args: [safeDisputeId!, BigInt(splitAgentBps), BigInt(splitClientBps)] });
     }
   }
 
@@ -438,7 +438,16 @@ export default function DisputeDetails() {
 
       {/* ═══════ Section E — Resolution ═══════ */}
       <Section title="Resolution">
-        {resolverSessionVerified && aiReview ? (
+        {dispute.resolved ? (
+          /* Live onchain resolution always overrides cached review state and wallet role. */
+          <Card className="border-success/20 bg-success/[0.035] p-7 shadow-depth-md">
+            <div className="text-label text-success">Resolved onchain</div>
+            <p className="mt-3 text-[14px] leading-7 text-slate-400">
+              This dispute has been resolved onchain.
+            </p>
+            <div className="mt-3"><DisputeOutcomeBadge outcome={Number(dispute.outcome)} /></div>
+          </Card>
+        ) : resolverSessionVerified && aiReview ? (
           /* Resolver/admin verified — show full decision panel */
           <ResolverActions
             review={aiReview}
@@ -455,15 +464,6 @@ export default function DisputeDetails() {
               <div className="text-label text-accent">Resolver Wallet Connected</div>
             </Card>
           </WalletSessionGate>
-        ) : dispute.resolved ? (
-          /* Resolved */
-          <Card className="border-success/20 bg-success/[0.035] p-7 shadow-depth-md">
-            <div className="text-label text-success">Resolved</div>
-            <p className="mt-3 text-[14px] leading-7 text-slate-400">
-              This dispute has been resolved onchain.
-            </p>
-            <div className="mt-3"><DisputeOutcomeBadge outcome={Number(dispute.outcome)} /></div>
-          </Card>
         ) : aiReview ? (
           /* Review ready, normal user */
           <Card className="border-borderDark/60 bg-black/20 p-7 shadow-depth-md">

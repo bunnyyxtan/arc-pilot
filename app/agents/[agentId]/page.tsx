@@ -13,6 +13,7 @@ import { useArcTransaction } from "../../../lib/contracts/hooks";
 import { formatAgentDisplayId } from "../../../lib/design/agent-id";
 import { shortenAddress } from "../../../lib/design/copy";
 import { formatUSDC } from "../../../lib/format/usdc";
+import { AgentIdentityBadge } from "../../../components/agents/AgentIdentityBadge";
 import { AgentRatingSummary } from "../../../components/agents/AgentRatingSummary";
 import { AgentStatsGrid } from "../../../components/agents/AgentStatsGrid";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
@@ -145,12 +146,14 @@ export default function AgentDetails() {
       <div className="glass-card rounded-2xl border border-borderDark/80 bg-[radial-gradient(ellipse_at_top_right,rgba(147,197,253,0.12),transparent_60%),linear-gradient(180deg,rgba(15,23,42,0.8),rgba(8,12,24,0.9))] p-8 shadow-depth-lg">
         <div className="flex flex-col justify-between gap-8 md:flex-row md:items-center">
           <div className="flex items-center gap-8">
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl border border-warning/20 bg-warning/[0.06] text-[32px] text-warning">★</div>
+            <AgentIdentityBadge name={agent.name || "ArcPilot Agent"} category={agent.category} size="lg" />
             <div>
-              <h1 className="lux-heading text-[40px] tracking-[-0.03em]">{agent.name}</h1>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <h1 className="lux-heading text-[40px] tracking-[-0.03em]">{agent.name}</h1>
+                <AgentRatingSummary summary={agent.reviewSummary} />
+              </div>
               <div className="mt-2 text-[15px] text-slate-400">{agent.category}</div>
               <div className="mono-value mt-3 text-[12px] text-slate-500">{displayId} / Onchain ID {String(agent.agentId)}</div>
-              <AgentRatingSummary summary={agent.reviewSummary} className="mt-4" />
             </div>
           </div>
           <div className="flex gap-3">

@@ -17,16 +17,17 @@ import { DeliverableViewer } from "../../../components/jobs/DeliverableViewer";
 import { JobTimeline } from "../../../components/jobs/JobTimeline";
 import { JobStatusBadge } from "../../../components/jobs/JobStatusBadge";
 import { DisputeConfirmModal } from "../../../components/jobs/DisputeConfirmModal";
+import { JobFeedbackModal, type ReviewContext } from "../../../components/jobs/JobFeedbackModal";
 import { Button } from "../../../components/ui/Button";
 import { Card } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
-import { Textarea } from "../../../components/ui/Textarea";
 import { Section } from "../../../components/ui/Section";
 import { SetupRequired } from "../../../components/layout/SetupRequired";
 import { WalletFundsNotice } from "../../../components/wallet/WalletFundsNotice";
 import type { DeliverableType } from "../../../lib/openai/prompts";
 import { toBigIntSafe } from "../../../lib/format/ids";
 import { logger } from "../../../lib/logger";
+import { getDisputeStatus } from "../../../lib/disputes/status";
 
 function detectDeliverableType(title: string, description: string): DeliverableType {
   const combined = `${title} ${description}`.toLowerCase();
@@ -55,8 +56,6 @@ type CompactDeliverable = {
   quality_checklist?: string[];
 };
 
-const REVIEW_TAGS = ["fast", "accurate", "high quality", "clear communication", "needs improvement"];
-
 export default function JobDetails() {
   const params = useParams();
   const router = useRouter();
@@ -81,17 +80,17 @@ export default function JobDetails() {
   const [gptError, setGptError] = useState<string | null>(null);
   const [gptSuccess, setGptSuccess] = useState<string | null>(null);
   const [uriCopied, setUriCopied] = useState(false);
-  const [deliverableSource, setDeliverableSource] = useState<string | null>(null);
   const [savedDeliverableVisibility, setSavedDeliverableVisibility] = useState<"public" | "restricted" | null>(null);
   const [compactDeliverable, setCompactDeliverable] = useState<CompactDeliverable | null>(null);
   const [existingReview, setExistingReview] = useState<any>(null);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewText, setReviewText] = useState("");
-  const [reviewTags, setReviewTags] = useState<string[]>([]);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewSuccess, setReviewSuccess] = useState<string | null>(null);
-  const [approvalJustCompleted, setApprovalJustCompleted] = useState(false);
+  const [reviewPromptContext, setReviewPromptContext] = useState<ReviewContext | null>(null);
+  const [regeneration, setRegeneration] = useState<{ attemptsUsed: number; maxAttempts: number; remainingAttempts: number } | null>(null);
+  const [linkedDispute, setLinkedDispute] = useState<any>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -135,23 +134,20 @@ export default function JobDetails() {
       setJob(nextJob);
       setAgent(nextAgent);
       setDeliverableURI(nextJob.deliverableURI || "");
-      setDeliverableSource(nextJob.deliverableURI ? "onchain" : null);
 
       try {
         const response = await fetch(`/api/jobs/${jobId}/deliverable`, { cache: "no-store" });
         const data = await response.json();
         if (response.ok && data?.deliverable_uri) {
           setDeliverableURI(data.deliverable_uri);
-          setDeliverableSource(typeof data.source === "string" ? data.source : null);
           setSavedDeliverableVisibility(data.visibility === "public" ? "public" : "restricted");
         } else if (!nextJob.deliverableURI) {
-          setDeliverableSource(null);
           setSavedDeliverableVisibility(null);
         }
       } catch {
         // The live contract remains the source of truth if the cache lookup is unavailable.
       }
-      if (Number(nextJob.status) === 4) {
+      if ([4, 6].includes(Number(nextJob.status))) {
         try {
           const response = await fetch(`/api/agents/${String(nextJob.agentId)}/reviews?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
           const data = await response.json();
@@ -161,6 +157,27 @@ export default function JobDetails() {
         }
       } else {
         setExistingReview(null);
+      }
+      try {
+        const response = await fetch(`/api/jobs/${jobId}/regenerations`, { cache: "no-store" });
+        const data = await response.json();
+        setRegeneration(response.ok && data.regeneration ? data.regeneration : null);
+      } catch {
+        setRegeneration(null);
+      }
+      if (Number(nextJob.status) === 6) {
+        try {
+          const response = await fetch("/api/disputes", { cache: "no-store" });
+          const data = await response.json();
+          const dispute = Array.isArray(data.disputes)
+            ? data.disputes.find((item: any) => String(item.jobId) === String(nextJob.jobId))
+            : null;
+          setLinkedDispute(dispute ?? null);
+        } catch {
+          setLinkedDispute(null);
+        }
+      } else {
+        setLinkedDispute(null);
       }
     } catch (loadError) {
       logger.warn("ui.jobs.detail", "load:failed", { jobId, contractsConfigured: Boolean(addresses), loadError }, "Job detail failed to load");
@@ -197,6 +214,16 @@ export default function JobDetails() {
     return () => { active = false; };
   }, [deliverableURI, walletSession.verifiedWallet]);
 
+  useEffect(() => {
+    if (!job || Number(job.status) !== 4 || !wallet.address) return;
+    if (wallet.address.toLowerCase() !== String(job.client).toLowerCase()) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("feedback") !== "approval") return;
+    setReviewPromptContext("approval");
+    url.searchParams.delete("feedback");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [job, wallet.address]);
+
   if (loading) return <div className="animate-pulse py-20 text-center text-[13px] text-slate-500">Loading Arc Testnet job...</div>;
   if (error || !job || !agent || !addresses) return <SetupRequired message={error || "Arc Testnet job not found."} />;
 
@@ -218,6 +245,12 @@ export default function JobDetails() {
   const isSelfUse = Boolean(clientAddress && agentOwnerNormalized && clientAddress.toLowerCase() === agentOwnerNormalized);
   const selfUseExplicit = isSelfUse && decoded?.jobMode === "self_use";
   const ownerExecutionCopy = "Only the agent owner can start or submit work in the current contract version.";
+  const linkedDisputeStatus = linkedDispute
+    ? getDisputeStatus(linkedDispute, {
+        hasEvidence: Boolean(linkedDispute.hasEvidence),
+        hasAIReview: Boolean(linkedDispute.aiRecommendation)
+      })
+    : null;
 
   function walletReason() {
     if (!wallet.isConnected) return "Wallet not connected";
@@ -262,6 +295,7 @@ export default function JobDetails() {
     (!agentOwnerAddress ? "Agent owner could not be loaded" : null) ||
     (!isAgentOwner ? ownerExecutionCopy : null) ||
     (!walletSession.matchesConnectedWallet ? "Verify wallet session before regenerating AI output" : null) ||
+    (regeneration && regeneration.remainingAttempts <= 0 ? "Regeneration limit reached for this job" : null) ||
     (gptLoading ? "AI run pending" : null);
 
   const submitReason =
@@ -305,7 +339,7 @@ export default function JobDetails() {
 
   async function approveWork() {
     const hash = await transact("Approve and release", { address: addresses!.AgentJobEscrow, abi: agentJobEscrowAbi, functionName: "approveAndRelease", args: [safeJobId!] });
-    if (hash) setApprovalJustCompleted(true);
+    if (hash && isJobClient && !isSelfUse) setReviewPromptContext("approval");
   }
 
   async function submitReview() {
@@ -316,13 +350,13 @@ export default function JobDetails() {
       const response = await fetch(`/api/agents/${String(agent.agentId)}/reviews`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobId, rating: reviewRating, reviewText, tags: reviewTags })
+        body: JSON.stringify({ jobId, rating: reviewRating, reviewText, reviewContext: reviewPromptContext })
       });
       const data = await response.json();
       if (!response.ok || !data.review) throw new Error(data.error || "Agent review could not be saved.");
       setExistingReview(data.review);
-      setReviewSuccess("Your review has been submitted.");
-      setApprovalJustCompleted(false);
+      setReviewSuccess(reviewPromptContext === "dispute" ? "Your feedback has been submitted." : "Your review has been submitted.");
+      setReviewPromptContext(null);
     } catch (reviewSubmitError) {
       setReviewError(reviewSubmitError instanceof Error ? reviewSubmitError.message : "Agent review could not be saved.");
     } finally {
@@ -391,6 +425,7 @@ export default function JobDetails() {
         }
         setShowDisputeModal(false);
         setDisputeApiError(null);
+        if (isJobClient && !isSelfUse) setReviewPromptContext("dispute");
         await load();
         router.refresh();
       }
@@ -430,10 +465,10 @@ export default function JobDetails() {
       const nextURI = data.deliverable?.deliverableURI || data.deliverableURI;
       if (!response.ok || !nextURI) throw new Error(data.error || "AI agent run failed.");
       setDeliverableURI(nextURI);
-      setDeliverableSource(typeof data.source === "string" ? data.source : data.reused ? "saved" : "generated");
       if (data.deliverable?.visibility === "public" || data.deliverable?.visibility === "restricted") {
         setSavedDeliverableVisibility(data.deliverable.visibility);
       }
+      if (data.regeneration) setRegeneration(data.regeneration);
       setGptSuccess(data.message || (data.reused ? `Existing deliverable reused: ${nextURI}` : `Deliverable generated: ${nextURI}`));
     } catch (runError) {
       setGptError(runError instanceof Error ? runError.message : "AI agent run failed.");
@@ -475,14 +510,21 @@ export default function JobDetails() {
   );
   const deliverableViewLabel =
     jobStatus === 2
-      ? isAgentOwner ? walletSession.matchesConnectedWallet ? selfUseExplicit ? "View Self-use Output" : "View Sealed Preview" : "Verify Wallet Session" : isReviewer ? "Waiting For Submission" : "Restricted"
+      ? isAgentOwner ? walletSession.matchesConnectedWallet ? selfUseExplicit ? "View Self-use Output" : "View Sealed Preview" : "Verify Wallet Session" : isReviewer ? "Waiting For Submission" : "Locked until approval"
       : jobStatus === 3
-        ? isAgentOwner ? walletSession.matchesConnectedWallet ? selfUseExplicit ? "View Self-use Output" : "View Sealed Preview" : "Verify Wallet Session" : isReviewer ? walletSession.matchesConnectedWallet ? "View Preview" : "Verify Wallet Session" : effectiveDeliverableVisibility === "public" ? "View Preview" : "Restricted"
+        ? isAgentOwner ? walletSession.matchesConnectedWallet ? selfUseExplicit ? "View Self-use Output" : "View Sealed Preview" : "Verify Wallet Session" : isReviewer ? walletSession.matchesConnectedWallet ? "View Preview" : "Verify Wallet Session" : effectiveDeliverableVisibility === "public" ? "View Preview" : "Locked until approval"
         : jobStatus === 4
           ? "View Full Report"
           : jobStatus === 6
-            ? isAgentOwner || isReviewer || effectiveDeliverableVisibility === "public" ? "View Preview" : "Restricted"
-            : "Restricted";
+            ? isAgentOwner || isReviewer || effectiveDeliverableVisibility === "public" ? "View Preview" : "Locked until approval"
+            : "Locked until approval";
+  const deliverableStatusLabel = jobStatus === 4
+    ? "Approved"
+    : jobStatus === 6
+      ? "In Dispute"
+      : jobStatus === 3
+        ? "Pending Approval"
+        : "Sealed Preview";
 
   return (
     <div className="flex flex-col gap-10 pb-12 animate-fadeInUp">
@@ -510,6 +552,13 @@ export default function JobDetails() {
       )}
       {gptError && <div className="rounded-xl border border-danger/30 bg-danger/5 p-4 text-[13px] text-danger">{gptError}</div>}
       {gptSuccess && <div className="rounded-xl border border-success/30 bg-success/5 p-4 text-[13px] leading-5 text-success">{gptSuccess}</div>}
+      {reviewSuccess && <div className="rounded-xl border border-success/30 bg-success/5 p-4 text-[13px] leading-5 text-success">{reviewSuccess}</div>}
+      {linkedDisputeStatus && (
+        <div className={`rounded-xl border p-4 text-[13px] leading-6 ${linkedDispute?.resolved ? "border-success/30 bg-success/5 text-success" : "border-warning/30 bg-warning/5 text-warning"}`}>
+          Dispute status: {linkedDisputeStatus}.
+          {linkedDispute?.resolved && " The onchain outcome is final."}
+        </div>
+      )}
       {isSelfUse && (
         <div className="rounded-xl border border-warning/25 bg-warning/[0.05] p-5">
           <div className="text-label text-warning">Self-use / Test Run</div>
@@ -541,18 +590,10 @@ export default function JobDetails() {
                 <div className="flex flex-col gap-5">
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div className="flex items-center gap-3">
-                      <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] ${jobStatus === 4 ? "border-success/30 bg-success/10 text-success" : "border-accent/30 bg-accent/10 text-accent"}`}>
-                        <span className={`h-1.5 w-1.5 rounded-full ${jobStatus === 4 ? "bg-success" : "bg-accent animate-pulse"}`}></span>
-                        {jobStatus === 4 ? "Final Deliverable" : "Saved Deliverable"}
+                      <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] ${jobStatus === 4 ? "border-success/30 bg-success/10 text-success" : jobStatus === 6 ? "border-danger/30 bg-danger/10 text-danger" : "border-accent/30 bg-accent/10 text-accent"}`}>
+                        <span className={`h-1.5 w-1.5 rounded-full ${jobStatus === 4 ? "bg-success" : jobStatus === 6 ? "bg-danger" : "bg-accent animate-pulse"}`}></span>
+                        {deliverableStatusLabel}
                       </div>
-                      <div className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] ${effectiveDeliverableVisibility === "public" ? "border-info/30 bg-info/10 text-info" : "border-warning/30 bg-warning/10 text-warning"}`}>
-                        {effectiveDeliverableVisibility === "public" ? "Public" : "Restricted"}
-                      </div>
-                      {deliverableSource && (
-                        <div className="inline-flex items-center rounded-full border border-borderDark bg-white/[0.03] px-3 py-1 text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400">
-                          {deliverableSource.replace(/_/g, " ")}
-                        </div>
-                      )}
                     </div>
                   </div>
                   <div className="bg-black/40 border border-borderDark rounded-xl p-4 shadow-depth-inset">
@@ -582,7 +623,7 @@ export default function JobDetails() {
                         : <Button variant="secondary" disabled>{deliverableViewLabel}</Button>}
                     <Button variant="secondary" onClick={copyDeliverableURI}>Copy URI</Button>
                     {jobStatus === 2 && isAgentOwner && (
-                      <Button variant="ghost" onClick={() => runGptAgent(true)} disabled={Boolean(regenerateReason)} title={regenerateReason || undefined}>
+                      <Button variant="secondary" onClick={() => runGptAgent(true)} disabled={Boolean(regenerateReason)} title={regenerateReason || undefined}>
                         {gptLoading ? "Regenerating..." : "Regenerate"}
                       </Button>
                     )}
@@ -605,6 +646,12 @@ export default function JobDetails() {
                   </div>
                   {jobStatus === 2 && isReviewer && !isAgentOwner && <div className="text-[12px] leading-5 text-slate-500">The agent has generated output but has not submitted it for review yet.</div>}
                   {jobStatus === 2 && isAgentOwner && !selfUseExplicit && <div className="text-[12px] leading-5 text-warning">Saved output generated. The full result stays sealed until escrow approval.</div>}
+                  {jobStatus === 2 && isAgentOwner && regeneration && (
+                    <div className="text-[12px] leading-5 text-slate-500">
+                      Regeneration allowance: {regeneration.remainingAttempts} of {regeneration.maxAttempts} remaining.
+                      {regeneration.remainingAttempts === 0 && " Regeneration limit reached for this job."}
+                    </div>
+                  )}
                   {jobStatus === 2 && !isReviewer && !isAgentOwner && <div className="text-[12px] leading-5 text-slate-500">This saved output is restricted until the agent submits it onchain.</div>}
                   {jobStatus === 2 && isAgentOwner && submitReason && <div className="text-[12px] leading-5 text-slate-500">Submit: {submitReason}.</div>}
                   {walletSession.error && <div className="text-[12px] leading-5 text-danger">{walletSession.error}</div>}
@@ -673,7 +720,7 @@ export default function JobDetails() {
               )}
             </Card>
           </Section>
-          {jobStatus === 4 && isJobClient && (
+          {[4, 6].includes(jobStatus) && isJobClient && (
             <Section title="Rate This Agent">
               <Card className="border-warning/20 bg-warning/[0.035] p-7 shadow-depth-md">
                 {existingReview ? (
@@ -685,30 +732,14 @@ export default function JobDetails() {
                 ) : isSelfUse ? (
                   <div className="text-[13px] leading-6 text-slate-400">Self-use jobs remain auditable but do not count toward public agent ratings.</div>
                 ) : (
-                  <div>
-                    <div className="text-label text-warning">{approvalJustCompleted ? "Work approved. Rate this agent." : "Rate this agent"}</div>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {[1, 2, 3, 4, 5].map((rating) => (
-                        <Button key={rating} type="button" size="sm" variant={reviewRating === rating ? "primary" : "secondary"} onClick={() => setReviewRating(rating)}>
-                          {rating} ★
-                        </Button>
-                      ))}
+                  <div className="flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <div className="text-label text-warning">{jobStatus === 6 ? "Client Feedback" : "Client Review"}</div>
+                      <div className="mt-2 text-[13px] leading-6 text-slate-400">Sharing a rating is optional and helps future clients choose the right agent.</div>
                     </div>
-                    <Textarea className="mt-4" label="Written review (optional)" placeholder="Share specific feedback about the completed work." value={reviewText} onChange={(event) => setReviewText(event.target.value)} />
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      {REVIEW_TAGS.map((tag) => (
-                        <Button key={tag} type="button" size="sm" variant={reviewTags.includes(tag) ? "primary" : "secondary"} onClick={() => setReviewTags((current) => current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag])}>
-                          {tag}
-                        </Button>
-                      ))}
-                    </div>
-                    <div className="mt-5 flex flex-wrap gap-3">
-                      {!walletSession.matchesConnectedWallet && <Button variant="secondary" onClick={() => walletSession.signIn().catch(() => undefined)} disabled={walletSession.signing}>{walletSession.signing ? "Waiting For Signature..." : "Verify Wallet Session"}</Button>}
-                      <Button onClick={submitReview} disabled={reviewSubmitting || reviewRating < 1 || !walletSession.matchesConnectedWallet}>{reviewSubmitting ? "Submitting..." : "Submit Review"}</Button>
-                      {approvalJustCompleted && <Button variant="ghost" onClick={() => setApprovalJustCompleted(false)}>Skip For Later</Button>}
-                    </div>
-                    {reviewError && <div className="mt-4 text-[13px] leading-6 text-danger">{reviewError}</div>}
-                    {reviewSuccess && <div className="mt-4 text-[13px] leading-6 text-success">{reviewSuccess}</div>}
+                    <Button variant="secondary" onClick={() => { setReviewError(null); setReviewPromptContext(jobStatus === 6 ? "dispute" : "approval"); }}>
+                      {jobStatus === 6 ? "Share Feedback" : "Rate Agent"}
+                    </Button>
                   </div>
                 )}
               </Card>
@@ -781,6 +812,21 @@ export default function JobDetails() {
         confirmDisabledReason={rejectReason}
         loading={disputeApiLoading || pending}
         error={disputeApiError}
+      />
+      <JobFeedbackModal
+        isOpen={Boolean(reviewPromptContext)}
+        context={reviewPromptContext || "approval"}
+        rating={reviewRating}
+        reviewText={reviewText}
+        submitting={reviewSubmitting}
+        sessionReady={walletSession.matchesConnectedWallet}
+        sessionSigning={walletSession.signing}
+        error={reviewError}
+        onRatingChange={setReviewRating}
+        onReviewTextChange={setReviewText}
+        onSubmit={submitReview}
+        onSkip={() => { setReviewPromptContext(null); setReviewError(null); }}
+        onVerifySession={() => walletSession.signIn().catch(() => undefined)}
       />
     </div>
   );

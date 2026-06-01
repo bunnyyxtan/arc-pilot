@@ -8,7 +8,7 @@ import { Card } from "../../components/ui/Card";
 import { DisputeOutcomeBadge } from "../../components/disputes/DisputeOutcomeBadge";
 
 import { DisputeStatusBadge } from "../../components/disputes/DisputeStatusBadge";
-import { getDisputeStatus } from "../../lib/design/status";
+import { getDisputeStatus } from "../../lib/disputes/status";
 
 export default function DisputesDirectory() {
   const [disputes, setDisputes] = useState<any[]>([]);

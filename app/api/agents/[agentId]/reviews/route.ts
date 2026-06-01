@@ -60,9 +60,10 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
     const job = await getJobView(jobId);
     const agent = await getAgent(job.agentId);
     if (job.agentId !== id) return NextResponse.json({ ok: false, error: "This job does not belong to the selected agent." }, { status: 400 });
-    if (job.status !== 4) return NextResponse.json({ ok: false, error: "Reviews can be submitted only after escrow approval." }, { status: 409 });
+    if (![4, 6].includes(job.status)) return NextResponse.json({ ok: false, error: "Reviews can be submitted only after approval or after a dispute is opened." }, { status: 409 });
     if (normalizeWallet(String(job.client)) !== viewer) return NextResponse.json({ ok: false, error: "Only the job client can review this agent." }, { status: 403 });
     if (normalizeWallet(String(agent.owner)) === viewer) return NextResponse.json({ ok: false, error: "Self-use jobs do not count toward public agent ratings." }, { status: 409 });
+    const reviewContext = job.status === 6 ? "dispute" : "approval";
     const insertRow = {
       chain_id: CHAIN_ID,
       agent_id: id.toString(),
@@ -71,14 +72,18 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
       rating,
       review_text: cleanText(body.reviewText, 2000) || null,
       tags: cleanTags(body.tags),
-      raw: toSupabaseJson({ source: "completed_job_review" }),
+      review_context: reviewContext,
+      raw: toSupabaseJson({ source: "client_job_review", reviewContext }),
       updated_at: new Date().toISOString()
     };
     const supabase = createServiceRoleSupabaseClient();
-    const { data, error } = await supabase.from("agent_reviews").insert(insertRow).select("*").single();
-    if (error?.code === "23505") return NextResponse.json({ ok: false, error: "Your review has already been submitted for this job." }, { status: 409 });
+    const { data, error } = await supabase
+      .from("agent_reviews")
+      .upsert(insertRow, { onConflict: "chain_id,job_id,client_wallet" })
+      .select("*")
+      .single();
     if (error || !data) throw new Error(error?.message || "Agent review could not be saved.");
-    logger.info("api.agents.reviews", "create:success", { agentId: id, jobId, rating }, "Agent review saved");
+    logger.info("api.agents.reviews", "upsert:success", { agentId: id, jobId, rating, reviewContext }, "Agent review saved");
     return NextResponse.json({ ok: true, review: data });
   } catch (error) {
     logger.error("api.agents.reviews", "create:failed", { error }, "Agent review save failed");

@@ -10,6 +10,7 @@ import { getJob } from "../../../../../lib/sdk/jobs";
 import { submitDeliverable } from "../../../../../lib/sdk/jobs";
 import { getIndexedJobDeliverable, getLatestDeliverableForJob } from "../../../../../lib/supabase/indexed-data";
 import { loadAgentScopeProfile } from "../../../../../lib/agents/profile";
+import { completeJobRegeneration, reserveJobRegeneration } from "../../../../../lib/jobs/regenerations";
 import { bodyPrivateKey, fail, ok, readJson, routeBigInt } from "../../../_utils";
 
 export async function POST(request: Request, context: { params: Promise<{ jobId: string }> }) {
@@ -30,6 +31,17 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
     if (verifiedWallet !== normalizeWallet(String(agent.owner))) {
       return fail(new Error("The verified wallet session is not the registered agent owner."), 403, "api.jobs.run", "run");
     }
+    if (job.status !== 2) {
+      return fail(new Error("AI output can be generated only while the job is Running."), 409, "api.jobs.run", "run");
+    }
+
+    const regeneration = body.forceRegenerate === true
+      ? await reserveJobRegeneration({
+          jobId: id,
+          agentId: job.agentId,
+          requestedByWallet: verifiedWallet
+        })
+      : null;
 
     if (body.forceRegenerate !== true) {
       const existing = typeof job.deliverableURI === "string" && job.deliverableURI
@@ -100,6 +112,9 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
       agentSkills: scopeProfile.skills,
       agentMetadata: scopeProfile.metadata
     });
+    if (regeneration) {
+      await completeJobRegeneration(regeneration.id, deliverable.deliverableHash, deliverable.deliverableURI);
+    }
 
     let submitResult: unknown;
     if (body.autoSubmit === true) {
@@ -117,6 +132,7 @@ export async function POST(request: Request, context: { params: Promise<{ jobId:
         scopeDecision: deliverable.scopeDecision
       },
       message: deliverable.refusedOutOfScope ? "Task outside agent scope. ArcPilot saved a refusal deliverable for review." : undefined,
+      regeneration: regeneration?.summary,
       submitResult
     });
   } catch (error) {

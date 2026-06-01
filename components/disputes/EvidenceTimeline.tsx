@@ -12,7 +12,7 @@ export function EvidenceTimeline({ evidence }: { evidence: DisputeEvidenceRow[] 
   if (evidence.length === 0) {
     return (
       <Card className="border-dashed border-borderDark/80 bg-white/[0.01] p-7 text-[13px] text-slate-500">
-        No evidence has been submitted yet.
+        No evidence submitted
       </Card>
     );
   }

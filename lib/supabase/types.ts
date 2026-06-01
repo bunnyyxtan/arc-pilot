@@ -68,9 +68,23 @@ export type AgentReviewRow = {
   rating: number;
   review_text?: string | null;
   tags?: Json;
+  review_context?: "approval" | "dispute";
   raw?: Json;
   created_at?: string;
   updated_at?: string;
+};
+
+export type JobRegenerationRow = {
+  id?: string;
+  chain_id: number;
+  job_id: number | string;
+  agent_id?: number | string | null;
+  requested_by_wallet?: string | null;
+  attempt_number: number | string;
+  deliverable_hash?: string | null;
+  deliverable_uri?: string | null;
+  created_at?: string;
+  raw?: Json;
 };
 
 export type IndexedAgentRow = {
@@ -245,6 +259,11 @@ export type Database = {
         Row: AgentReviewRow;
         Insert: AgentReviewRow;
         Update: Partial<AgentReviewRow>;
+      };
+      job_regenerations: {
+        Row: JobRegenerationRow;
+        Insert: JobRegenerationRow;
+        Update: Partial<JobRegenerationRow>;
       };
       indexed_jobs: {
         Row: IndexedJobRow;
